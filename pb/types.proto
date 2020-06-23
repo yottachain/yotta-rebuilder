@@ -1,0 +1,283 @@
+syntax = "proto3";
+
+package pb;
+
+option optimize_for = SPEED;
+option java_multiple_files = true;
+option java_package = "io.yottachain.nodemgmt.rebuilder.pb";
+option java_outer_classname = "RebuilderProto";
+
+// yotta-rebuilder micro-servicew
+service Rebuilder {
+  rpc GetRebuildTasks(Empty) returns (MultiTaskDescription) {}
+  rpc UpdateTaskStatus(MultiTaskOpResult) returns (Empty) {}
+}
+
+// empty message
+message Empty {
+}
+
+// message that only contains a value of bool
+message BoolMessage {
+  bool value = 1;
+}
+
+// message that only contains a value of string
+message StringMsg {
+  string value = 1;
+}
+
+// message that only contains two values of string
+message String2Msg {
+  string param1 = 1;
+  string param2 = 2;
+}
+
+// message that only contains a value of int32
+message Int32Msg {
+    int32 value = 1;
+}
+
+// message that only contains a value of int64
+message Int64Msg {
+    int64 value = 1;
+}
+
+// Node message
+message NodeMsg {
+	int32 iD = 1;                  //data node index
+	string nodeID = 2;             //data node ID, generated from PubKey
+	string pubKey = 3;             //public key of data node
+	string owner = 4;              //owner account of this miner
+	string profitAcc = 5;          //profit account of this miner
+  	string poolID = 6;             //ID of associated miner pool
+  	string poolOwner = 7;          //Owner of associated miner pool
+	int64 quota = 8;               //quota allocated by associated miner pool
+	repeated string addrs = 9;     //listening addresses of data node
+	int32 cPU = 10;                 //CPU usage of data node
+	int32 memory = 11;             //memory usage of data node
+	int32 bandwidth = 12;          //bandwidth usage of data node
+	int64 maxDataSpace = 13;       //max space of data node
+	int64 assignedSpace = 14;      //space assigned to YTFS
+	int64 productiveSpace = 15;    //pre-allocated space of data node
+  	int64 usedSpace = 16;          //used space of data node
+	double weight = 17;            //weight for allocate data node
+	int32 valid = 18;              //Is node valid
+	int32 relay = 19;              //Is relay node
+	int32 status = 20;             //status code: 0 - registered 1 - active
+	int64 timestamp = 21;          //timestamp of status updating operation
+  	int32 version = 22;            //version number of miner
+  	int32 rebuilding = 23;         //if node is under rebuilding
+  	int64 realSpace = 24;          //real space of miner
+  	int64 tx = 25;                 //tx
+  	int64 rx = 26;                 //rx
+	string ext = 27;               //other
+	map<string, int64> uspaces = 28; //used spaces on each SN
+}
+
+// SuperNode message
+message SuperNodeMsg {
+	int32 iD = 1;               //super node index
+	string nodeID = 2;          //super node ID, generated from PubKey
+	string pubKey = 3;          //public key of super node
+	string privKey = 4;         //private key of super node
+	repeated string addrs = 5;  //listening addresses of super node
+}
+
+// NodeStat message
+message NodeStatMsg {
+	int64 activeMiners = 1;     // count of active miners
+	int64 totalMiners = 2;      // count of all miners
+	int64 maxTotal = 3;         // total disk size of all miners' storage
+	int64 assignedTotal = 4;    // total amount of all miners' assigned space
+	int64 productiveTotal = 5;  // total amount of all miners' productive space
+	int64 usedTotal = 6;        // total amount of all miners' used space
+}
+
+// SpotCheckTask message
+message SpotCheckTaskMsg {
+	int32 iD = 1;
+	string nodeID = 2;
+	string addr = 3;
+	string vNI = 4;
+}
+
+// SpotCheckList message
+message SpotCheckListMsg {
+	string taskID = 1;
+	repeated SpotCheckTaskMsg taskList = 2;
+	int64 timestamp = 3;
+}
+
+// response message of GetSpotCheckList function
+message GetSpotCheckListResp {
+  repeated SpotCheckListMsg spotCheckLists = 1;
+}
+
+// response message with multiple nodes
+message NodesResp {
+  repeated NodeMsg nodes  =  1;
+}
+
+// response message with multiple supernodes
+message SuperNodesResp {
+  repeated SuperNodeMsg superNodes  =  1;
+}
+
+// request message of IncrUsedSpace function
+message IncrUsedSpaceReq {
+  int32 id = 1;
+  int64 incr = 2;
+}
+
+// request message of AllocNodes function
+message AllocNodesReq {
+  int32 shardCount = 1;
+  repeated int32 errIDs = 2;
+}
+
+// request message of GetNodes function
+message GetNodesReq {
+  repeated int32 nodeIDs = 1;
+}
+
+// request message of AddDNI function
+message DNIReq {
+  int32 id = 1;
+  bytes shard = 2;
+}
+
+// request message of UpdateTaskStatus function
+message UpdateTaskStatusReq {
+  string id = 1;
+  int32 invalidNode = 2;
+}
+
+// ShardCount message
+message ShardCountMsg {
+	int32 iD = 1;
+	int64 cnt = 2;
+}
+
+// request message of GetInvalidNodes function
+message GetInvalidNodesResp {
+  repeated ShardCountMsg shardCounts = 1;
+}
+
+// request message of GetInvalidNodes function
+message GetRebuildItemReq {
+  int32 minerID = 1;
+  int64 index = 2;
+  int64 total = 3;
+}
+
+// response message of GetInvalidNodes function
+message GetRebuildItemResp {
+  NodeMsg node = 1;
+  repeated bytes shards = 2;
+}
+
+message DownloadShardRequest {
+  bytes VHF=1;
+}
+
+message DownloadShardResponse{
+  bytes data=1;
+}
+
+message SignMessage {
+  string accountName = 1;
+  bytes data = 2;
+  string signature = 3;
+}
+
+message UpdateUspaceMessage {
+  int32 nodeID = 1;
+  int32 fromNodeID = 2;
+  int64 uspace = 3;
+}
+
+message PunishMessage {
+	int32 nodeID = 1;
+	int32 type = 2;
+	bool needPunish = 3;
+	int32 count = 4;
+	map<int32, int32> rule = 5;
+}
+
+//重建任务
+//msgid=0x2cb0
+message MultiTaskDescription{
+    repeated bytes tasklist=1;
+}
+//tasklist列表可能包含rs和副本集两种类型任务，按msgid再解析一次
+
+//RS编码重建任务
+//msgid=0xd761
+// message TaskDescription{
+//     bytes id = 1; 
+//     repeated bytes hashs=2;
+//     repeated P2PLocation locations=3;
+//     int32 parityShardCount=4;
+//     int32 recoverId=5;
+// }
+
+//id:任务ID,在上报重建结果(TaskOpResult)时,传入
+//hashs:RS分片HASH列表
+//locations:RS分片对应的矿机地址列表,数目与hashs一致
+//parityShardCount:校验分片数目(一般32),即hashs的后32个是校验分片
+//recoverId:需要恢复的分片索引,从0开始,相当于hashs[recoverId]需要恢复
+
+
+//LRC编码重建任务
+//msgid=0x68b3
+message TaskDescription{
+    bytes id = 1; 
+    repeated bytes hashs=2;
+    repeated P2PLocation locations=3;
+    int32 parityShardCount=4;
+    int32 recoverId=5;
+}
+
+
+//副本集编码重建任务
+//msgid=0xc258
+message TaskDescriptionCP{
+    bytes id = 1; 
+    bytes dataHash=2;
+    repeated P2PLocation locations=3;
+}
+
+//副本集模式指一个小于16K的数据块,不使用RS编码,生成32个完全相同的数据分片写入32台矿机
+//id:任务ID,在上报重建结果(TaskOpResult)时,传入
+//hashs:副本集分片HASH(所有分片的HASH是相同的)
+//locations:副本分片对应的矿机地址列表,从32台矿机中任选一个下载到数据，复制到本地即可
+
+
+message P2PLocation{
+    string nodeId=1;
+    repeated string addrs=2;
+}
+
+//矿机收到任务请回复VoidResp
+//msgid=0xe64f
+message VoidResponse  {
+}
+
+//矿机重建完毕后向任务发起方SN返回结果
+//msgid=0x16f3
+message TaskOpResult{
+    bytes id = 1; 
+    int32 RES=2;
+}
+
+//暂定：RES=0 成功，RES=1 失败
+//矿机收到结果回复VoidResp
+
+
+//批量向任务发起方SN返回结果，注意所有结果必须是属于同一SN
+//MessageID:1b31
+message MultiTaskOpResult{
+    repeated bytes id = 1; 
+    repeated int32 RES=2;
+}

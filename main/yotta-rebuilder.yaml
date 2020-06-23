@@ -1,0 +1,44 @@
+
+bind-addr: ":8080"
+analysisdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
+rebuilderdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
+auramq:
+  subscriber-buffer-size: 1024
+  ping-wait: 30
+  read-wait: 60
+  write-wait: 10
+  miner-sync-topic: "sync"
+  all-sn-urls:
+  - "ws://172.17.0.2:8787/ws"
+  - "ws://172.17.0.3:8787/ws"
+  - "ws://172.17.0.4:8787/ws"
+  - "ws://172.17.0.5:8787/ws"
+  - "ws://172.17.0.6:8787/ws"
+  account: "yottanalysis"
+  private-key: "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7"
+logger:
+  output: "file"
+  file-path: "./spotcheck.log"
+  rotation-time: 24
+  max-age: 240
+  level: "Debug"
+misc:
+  rebuildable-node-time-gap: 14400
+  process-rebuildable-miner-interval: 10
+  process-rebuildable-shard-interval: 10
+  reckecking-pool-length: 5000
+  reckecking-queue-length: 10000
+  avaliable-node-time-gap: 3
+  miner-version-threshold: 0
+  punish-phase1: 1440
+  punish-phase1-percent: 1
+  punish-phase2: 4320
+  punish-phase2-percent: 10
+  punish-phase3: 10080
+  punish-phase3-percent: 50
+  spotcheck-skip-time: 0
+  spotcheck-interval: 3
+  spotcheck-connect-timeout: 30
+  error-node-percent-threshold: 101
+  pool-error-miner-time-threshold: 14400
+  exclude-addr-prefix: "/ip4/172.17"
