@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/yottachain/yotta-rebuilder/pb"
+	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 
 	"github.com/aurawing/auramq"
 	"github.com/aurawing/auramq/msg"

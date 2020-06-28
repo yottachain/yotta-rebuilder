@@ -1,7 +1,7 @@
 package ytrebuilder
 
 import (
-	pb "github.com/yottachain/yotta-rebuilder/pb"
+	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 

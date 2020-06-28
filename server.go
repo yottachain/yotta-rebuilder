@@ -3,7 +3,7 @@ package ytrebuilder
 import (
 	"context"
 
-	pb "github.com/yottachain/yotta-rebuilder/pb"
+	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
 )

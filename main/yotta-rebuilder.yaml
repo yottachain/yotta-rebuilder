@@ -1,4 +1,3 @@
-
 bind-addr: ":8080"
 analysisdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
 rebuilderdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
@@ -23,22 +22,11 @@ logger:
   max-age: 240
   level: "Debug"
 misc:
-  rebuildable-node-time-gap: 14400
+  rebuildable-miner-time-gap: 14400
   process-rebuildable-miner-interval: 10
   process-rebuildable-shard-interval: 10
-  reckecking-pool-length: 5000
-  reckecking-queue-length: 10000
-  avaliable-node-time-gap: 3
-  miner-version-threshold: 0
-  punish-phase1: 1440
-  punish-phase1-percent: 1
-  punish-phase2: 4320
-  punish-phase2-percent: 10
-  punish-phase3: 10080
-  punish-phase3-percent: 50
-  spotcheck-skip-time: 0
-  spotcheck-interval: 3
-  spotcheck-connect-timeout: 30
-  error-node-percent-threshold: 101
-  pool-error-miner-time-threshold: 14400
+  process-reaper-interval: 60
+  rebuild-shard-expired-time: 1200
+  rebuild-shard-task-batch-size: 10000
+  rebuild-shard-miner-task-batch-size: 1000
   exclude-addr-prefix: "/ip4/172.17"

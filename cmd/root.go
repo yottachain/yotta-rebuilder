@@ -15,7 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	ytrebuilder "github.com/yottachain/yotta-rebuilder"
-	"github.com/yottachain/yotta-rebuilder/pb"
+	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 )
 
 var cfgFile string

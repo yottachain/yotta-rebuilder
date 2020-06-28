@@ -12,7 +12,7 @@ import (
 	"github.com/aurawing/auramq/msg"
 	proto "github.com/golang/protobuf/proto"
 	log "github.com/sirupsen/logrus"
-	"github.com/yottachain/yotta-rebuilder/pb"
+	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 	ytsync "github.com/yottachain/yotta-rebuilder/sync"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
