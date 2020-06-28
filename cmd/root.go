@@ -218,7 +218,7 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.AuramqMinerSyncTopicField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqMinerSyncTopicField))
 	rootCmd.PersistentFlags().StringSlice(ytrebuilder.AuramqAllSNURLsField, DefaultAuramqAllSNURLs, "all URLs of MQ port, in the form of --auramq.all-sn-urls \"URL1,URL2,URL3\"")
 	viper.BindPFlag(ytrebuilder.AuramqAllSNURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqAllSNURLsField))
-	rootCmd.PersistentFlags().String(ytrebuilder.AuramqAccountField, DefaultAuramqAccount, "yottanalysis")
+	rootCmd.PersistentFlags().String(ytrebuilder.AuramqAccountField, DefaultAuramqAccount, "BP account for anthentication")
 	viper.BindPFlag(ytrebuilder.AuramqAccountField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqAccountField))
 	rootCmd.PersistentFlags().String(ytrebuilder.AuramqPrivateKeyField, DefaultAuramqPrivateKey, "")
 	viper.BindPFlag(ytrebuilder.AuramqPrivateKeyField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqPrivateKeyField))
