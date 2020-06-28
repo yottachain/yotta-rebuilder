@@ -315,7 +315,7 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 			curShard.Close(context.Background())
 			if len(shards) == 0 {
 				//重建完毕，状态改为3，删除旧任务
-				_, err := collectionRS.DeleteMany(context.Background(), bson.M{"_id": miner.ID})
+				_, err := collectionRS.DeleteMany(context.Background(), bson.M{"minerID": miner.ID})
 				if err != nil {
 					entry.WithField(MinerID, miner.ID).WithError(err).Error("delete old shard-rebuildng tasks")
 					continue
