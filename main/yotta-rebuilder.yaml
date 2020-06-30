@@ -15,6 +15,7 @@ auramq:
   - "ws://172.17.0.6:8787/ws"
   account: "yottanalysis"
   private-key: "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7"
+  client-id: "yottarebuilder"
 logger:
   output: "file"
   file-path: "./spotcheck.log"

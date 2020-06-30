@@ -33,6 +33,10 @@ type Rebuilder struct {
 //New create a new rebuilder instance
 func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, conf *MiscConfig) (*Rebuilder, error) {
 	entry := log.WithFields(log.Fields{Function: "New"})
+	// entry.Debugf("analysis DB URL: %s", analysisDBURL)
+	// entry.Debugf("rebuilder DB URL: %s", rebuilderDBURL)
+	// entry.Debugf("MQ config: %+v", mqconf)
+	// entry.Debugf("Misc config: %+v", conf)
 	analysisdbClient, err := mongo.Connect(context.Background(), options.Client().ApplyURI(analysisDBURL))
 	if err != nil {
 		entry.WithError(err).Errorf("creating analysisDB client failed: %s", analysisDBURL)
@@ -60,7 +64,7 @@ func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, conf *MiscC
 			}
 		}
 	}
-	m, err := ytsync.StartSync(mqconf.SubscriberBufferSize, mqconf.PingWait, mqconf.ReadWait, mqconf.WriteWait, mqconf.MinerSyncTopic, mqconf.AllSNURLs, callback, mqconf.Account, mqconf.PrivateKey)
+	m, err := ytsync.StartSync(mqconf.SubscriberBufferSize, mqconf.PingWait, mqconf.ReadWait, mqconf.WriteWait, mqconf.MinerSyncTopic, mqconf.AllSNURLs, callback, mqconf.Account, mqconf.PrivateKey, mqconf.ClientID)
 	if err != nil {
 		entry.WithError(err).Error("creating mq clients map failed")
 		return nil, err
@@ -268,7 +272,7 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 				block := new(Block)
 				err = collectionAB.FindOne(context.Background(), bson.M{"_id": shard.BlockID}).Decode(block)
 				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Error("decoding block")
+					entry.WithField(MinerID, miner.ID).WithError(err).Errorf("decoding block of shard %d", shard.ID)
 					curShard.Close(context.Background())
 					continue INNER
 				}
@@ -330,8 +334,8 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 			if err != nil {
 				entry.WithField(MinerID, miner.ID).WithError(err).Warn("insert shard-rebuilding tasks")
 			}
-			From := shards[0].(Shard).ID
-			To := shards[len(shards)-1].(Shard).ID
+			From := shards[0].(RebuildShard).ID
+			To := shards[len(shards)-1].(RebuildShard).ID
 			_, err = collectionRM.UpdateOne(context.Background(), bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{"from": From, "to": To}})
 			if err != nil {
 				entry.WithField(MinerID, miner.ID).WithError(err).Warn("update shard-rebuilding tasks range")
@@ -373,6 +377,7 @@ func (rebuilder *Rebuilder) reaper() {
 //GetRebuildTasks get rebuild tasks
 func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) {
 	entry := log.WithFields(log.Fields{Function: "GetRebuildTasks"})
+	entry.Debug("call GetRebuildTasks function")
 	collectionRN := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
 	collectionAB := rebuilder.analysisdbClient.Database(MetaDB).Collection(Blocks)
 	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
@@ -394,6 +399,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 			entry.WithError(err).Warn("decode rebuildable miner")
 			continue
 		}
+		entry.WithField(MinerID, miner.ID).Debug("decode miner info")
 		cur2, err := collectionRS.Find(context.Background(), bson.M{"minerID": miner.ID, "timestamp": bson.M{"$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildShardExpiredTime)}})
 		if err != nil {
 			entry.WithField(MinerID, miner.ID).WithError(err).Warn("fetch rebuildable shards")
@@ -403,6 +409,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 		tasks := new(pb.MultiTaskDescription)
 		for cur2.Next(context.Background()) {
 			if i == rebuilder.Params.RebuildShardMinerTaskBatchSize {
+				entry.WithField(MinerID, miner.ID).Debug("miner task batch size exceed")
 				break
 			}
 			i++
@@ -413,7 +420,9 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 				i--
 				continue
 			}
-			result, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": shard.ID, "timestamp": shard.Timestamp}, bson.M{"$set": bson.M{"timestamp": time.Now().UnixNano()}})
+			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debug("decode shard info")
+			updateTime := time.Now().UnixNano()
+			result, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": shard.ID, "timestamp": shard.Timestamp}, bson.M{"$set": bson.M{"timestamp": updateTime}})
 			if err != nil {
 				entry.WithField(MinerID, miner.ID).WithError(err).Errorf("update timestamp of rebuildable shard: %d", shard.ID)
 				i--
@@ -424,6 +433,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 				i--
 				continue
 			}
+			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("update timestamp of shard task to %d", updateTime)
 			block := new(Block)
 			err = collectionAB.FindOne(context.Background(), bson.M{"_id": shard.BlockID}).Decode(block)
 			if err != nil {
@@ -433,6 +443,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 				i--
 				continue
 			}
+			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debug("decode block info")
 			hashs := make([][]byte, 0)
 			locations := make([]*pb.P2PLocation, 0)
 			for i := shard.BlockID; i < shard.BlockID+int64(block.VNF); i++ {
@@ -442,17 +453,20 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 					entry.WithField(MinerID, miner.ID).WithError(err).Errorf("decoding sibling shard %d of shard %d", i, shard.ID)
 					continue
 				}
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debugf("decode sibling shard info: %d", s.ID)
 				n := new(Node)
 				err = collectionRN.FindOne(context.Background(), bson.M{"_id": s.NodeID}).Decode(n)
 				if err != nil {
 					entry.WithField(MinerID, miner.ID).WithError(err).Errorf("decoding miner info of sibling shard %d of shard %d", i, shard.ID)
 					continue
 				}
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debugf("decode miner info of sibling shard %d: %d", s.ID, n.ID)
 				hashs = append(hashs, s.VHF.Data)
 				locations = append(locations, &pb.P2PLocation{NodeId: n.NodeID, Addrs: n.Addrs})
 			}
 			var b []byte
 			if shard.Type == 0x68b3 {
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debug("create LRC rebuilding task")
 				//LRC
 				task := new(pb.TaskDescription)
 				task.Id = Int64ToBytes(shard.ID)
@@ -467,6 +481,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 					continue
 				}
 			} else if shard.Type == 0xc258 {
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debug("create replication rebuilding task")
 				//replication
 				task := new(pb.TaskDescriptionCP)
 				task.Id = Int64ToBytes(shard.ID)

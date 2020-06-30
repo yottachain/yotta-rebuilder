@@ -24,6 +24,8 @@ const (
 	AuramqAccountField = "auramq.account"
 	//AuramqPrivateKeyField Field name of auramq.private-key
 	AuramqPrivateKeyField = "auramq.private-key"
+	//AuramqClientIDField Field name of auramq.client-id
+	AuramqClientIDField = "auramq.client-id"
 
 	//LoggerOutputField Field name of logger.output config
 	LoggerOutputField = "logger.output"
@@ -74,6 +76,7 @@ type AuraMQConfig struct {
 	AllSNURLs            []string `mapstructure:"all-sn-urls"`
 	Account              string   `mapstructure:"account"`
 	PrivateKey           string   `mapstructure:"private-key"`
+	ClientID             string   `mapstructure:"client-id"`
 }
 
 //LogConfig system log configuration
@@ -92,7 +95,7 @@ type MiscConfig struct {
 	ProcessRebuildableShardInterval int    `mapstructure:"process-rebuildable-shard-interval"`
 	ProcessReaperInterval           int    `mapstructure:"process-reaper-interval"`
 	RebuildShardExpiredTime         int    `mapstructure:"rebuild-shard-expired-time"`
-	RebuildShardTaskBatchSize       int    `mapstructure:"misc.rebuild-shard-task-batch-size"`
-	RebuildShardMinerTaskBatchSize  int    `mapstructure:"misc.rebuild-shard-miner-task-batch-size"`
+	RebuildShardTaskBatchSize       int    `mapstructure:"rebuild-shard-task-batch-size"`
+	RebuildShardMinerTaskBatchSize  int    `mapstructure:"rebuild-shard-miner-task-batch-size"`
 	ExcludeAddrPrefix               string `mapstructure:"exclude-addr-prefix"`
 }

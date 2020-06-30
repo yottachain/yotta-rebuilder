@@ -19,6 +19,8 @@ const (
 	TaskID = "taskID"
 	//MinerID tag
 	MinerID = "minerID"
+	//BlockID tag
+	BlockID = "blockID"
 	//ShardID tag
 	ShardID = "shardID"
 	//ShardHash tag
@@ -173,7 +175,7 @@ type Block struct {
 //Shard shard struct
 type Shard struct {
 	ID      int64            `bson:"_id"`
-	BlockID int64            `bson:"blockId"`
+	BlockID int64            `bson:"blockid"`
 	NodeID  int32            `bson:"nodeId"`
 	VHF     primitive.Binary `bson:"VHF"`
 }

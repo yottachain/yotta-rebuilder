@@ -33,6 +33,8 @@ auramq:
   account: "yottanalysis"
   #鉴权用私钥，为account在BP上的active私钥，默认值为空
   private-key: "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7"
+  #MQ客户端ID，连接SN的MQ时使用，必须保证在MQ server端唯一，默认值为yottarebuilder
+  client-id: "yottarebuilder"
 #日志相关配置
 logger:
   #日志输出类型：stdout为输出到标准输出流，file为输出到文件，默认为stdout，此时只有level属性起作用，其他属性会被忽略

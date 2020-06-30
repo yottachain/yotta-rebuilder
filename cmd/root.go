@@ -169,6 +169,8 @@ var (
 	DefaultAuramqAccount = ""
 	//DefaultAuramqPrivateKey default value of AuramqPrivateKey
 	DefaultAuramqPrivateKey = ""
+	//DefaultAuramqClientID default value of AuramqClientID
+	DefaultAuramqClientID = "yottarebuilder"
 
 	//DefaultLoggerOutput default value of LoggerOutput
 	DefaultLoggerOutput string = "stdout"
@@ -205,6 +207,8 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.BindAddrField, rootCmd.PersistentFlags().Lookup(ytrebuilder.BindAddrField))
 	rootCmd.PersistentFlags().String(ytrebuilder.AnalysisDBURLField, DefaultAnalysisDBURL, "mongoDB URL of analysis database")
 	viper.BindPFlag(ytrebuilder.AnalysisDBURLField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AnalysisDBURLField))
+	rootCmd.PersistentFlags().String(ytrebuilder.RebuilderDBURLField, DefaultRebuilderDBURL, "mongoDB URL of rebuilder database")
+	viper.BindPFlag(ytrebuilder.RebuilderDBURLField, rootCmd.PersistentFlags().Lookup(ytrebuilder.RebuilderDBURLField))
 	//AuraMQ config
 	rootCmd.PersistentFlags().Int(ytrebuilder.AuramqSubscriberBufferSizeField, DefaultAuramqSubscriberBufferSize, "subscriber buffer size")
 	viper.BindPFlag(ytrebuilder.AuramqSubscriberBufferSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqSubscriberBufferSizeField))
@@ -218,10 +222,12 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.AuramqMinerSyncTopicField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqMinerSyncTopicField))
 	rootCmd.PersistentFlags().StringSlice(ytrebuilder.AuramqAllSNURLsField, DefaultAuramqAllSNURLs, "all URLs of MQ port, in the form of --auramq.all-sn-urls \"URL1,URL2,URL3\"")
 	viper.BindPFlag(ytrebuilder.AuramqAllSNURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqAllSNURLsField))
-	rootCmd.PersistentFlags().String(ytrebuilder.AuramqAccountField, DefaultAuramqAccount, "BP account for anthentication")
+	rootCmd.PersistentFlags().String(ytrebuilder.AuramqAccountField, DefaultAuramqAccount, "BP account for authenticating")
 	viper.BindPFlag(ytrebuilder.AuramqAccountField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqAccountField))
-	rootCmd.PersistentFlags().String(ytrebuilder.AuramqPrivateKeyField, DefaultAuramqPrivateKey, "")
+	rootCmd.PersistentFlags().String(ytrebuilder.AuramqPrivateKeyField, DefaultAuramqPrivateKey, "private key of account for authenticating")
 	viper.BindPFlag(ytrebuilder.AuramqPrivateKeyField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqPrivateKeyField))
+	rootCmd.PersistentFlags().String(ytrebuilder.AuramqClientIDField, DefaultAuramqClientID, "client ID for identifying MQ client")
+	viper.BindPFlag(ytrebuilder.AuramqClientIDField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqClientIDField))
 	//logger config
 	rootCmd.PersistentFlags().String(ytrebuilder.LoggerOutputField, DefaultLoggerOutput, "Output type of logger(stdout or file)")
 	viper.BindPFlag(ytrebuilder.LoggerOutputField, rootCmd.PersistentFlags().Lookup(ytrebuilder.LoggerOutputField))

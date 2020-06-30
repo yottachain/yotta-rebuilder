@@ -14,7 +14,7 @@ type RebuilderClient struct {
 
 //NewClient create a new grpc client
 func NewClient(addr string) (*RebuilderClient, error) {
-	conn, err := grpc.Dial(addr, grpc.WithInsecure())
+	conn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024*1024*2)))
 	if err != nil {
 		return nil, err
 	}
