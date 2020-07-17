@@ -208,7 +208,8 @@ message PunishMessage {
 //重建任务
 //msgid=0x2cb0
 message MultiTaskDescription{
-    repeated bytes tasklist=1;
+	int32 snID=1;
+    repeated bytes tasklist=2;
 }
 //tasklist列表可能包含rs和副本集两种类型任务，按msgid再解析一次
 

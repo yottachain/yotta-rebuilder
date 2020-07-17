@@ -18,7 +18,7 @@ auramq:
   client-id: "yottarebuilder"
 logger:
   output: "file"
-  file-path: "./spotcheck.log"
+  file-path: "./rebuilder.log"
   rotation-time: 24
   max-age: 240
   level: "Debug"

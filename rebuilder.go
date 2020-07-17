@@ -508,6 +508,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 		if i == 0 {
 			continue
 		}
+		tasks.SnID = miner.ID
 		return tasks, nil
 	}
 	return nil, errors.New("no tasks can be allocated")
