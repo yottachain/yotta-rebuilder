@@ -375,7 +375,7 @@ func (rebuilder *Rebuilder) reaper() {
 }
 
 //GetRebuildTasks get rebuild tasks
-func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) {
+func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription, error) {
 	entry := log.WithFields(log.Fields{Function: "GetRebuildTasks"})
 	entry.Debug("call GetRebuildTasks function")
 	collectionRN := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
@@ -384,9 +384,11 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
+	snCount := int32(len(rebuilder.mqClis))
+	snID := id % snCount
 	opt := new(options.FindOptions)
 	opt.Sort = bson.M{"timestamp": 1}
-	cur, err := collectionRM.Find(context.Background(), bson.M{"status": 2}, opt)
+	cur, err := collectionRM.Find(context.Background(), bson.M{"_id": bson.M{"$mod": bson.A{snCount, snID}}, "status": 2}, opt)
 	if err != nil {
 		entry.WithError(err).Error("fetch rebuildable miners")
 		return nil, err
@@ -508,7 +510,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks() (*pb.MultiTaskDescription, error) 
 		if i == 0 {
 			continue
 		}
-		tasks.SnID = miner.ID
+		tasks.SnID = miner.ID % snCount
 		return tasks, nil
 	}
 	return nil, errors.New("no tasks can be allocated")

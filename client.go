@@ -22,8 +22,8 @@ func NewClient(addr string) (*RebuilderClient, error) {
 }
 
 //GetRebuildTasks client call of GetRebuildTasks
-func (cli *RebuilderClient) GetRebuildTasks(ctx context.Context) (*pb.MultiTaskDescription, error) {
-	result, err := cli.client.GetRebuildTasks(ctx, &pb.Empty{})
+func (cli *RebuilderClient) GetRebuildTasks(ctx context.Context, id int32) (*pb.MultiTaskDescription, error) {
+	result, err := cli.client.GetRebuildTasks(ctx, &pb.Int32Msg{Value: id})
 	if err != nil {
 		return nil, err
 	}

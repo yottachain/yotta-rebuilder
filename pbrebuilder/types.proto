@@ -9,7 +9,7 @@ option java_outer_classname = "RebuilderProto";
 
 // yotta-rebuilder micro-servicew
 service Rebuilder {
-  rpc GetRebuildTasks(Empty) returns (MultiTaskDescription) {}
+  rpc GetRebuildTasks(Int32Msg) returns (MultiTaskDescription) {}
   rpc UpdateTaskStatus(MultiTaskOpResult) returns (Empty) {}
 }
 

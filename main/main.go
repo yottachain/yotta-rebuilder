@@ -19,7 +19,7 @@ func main0() {
 	if err != nil {
 		panic(err)
 	}
-	result, err := cli.GetRebuildTasks(context.Background())
+	result, err := cli.GetRebuildTasks(context.Background(), 1)
 	if err != nil {
 		panic(err)
 	}
