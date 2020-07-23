@@ -561,7 +561,7 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) {
 	entry.Infof("received rebuild status: %d results", len(result.Id))
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	for i, b := range result.Id {
-		id := BytesToInt64(b)
+		id := BytesToInt64(b[0:8])
 		ret := result.RES[i]
 		if ret == 0 {
 			entry.Debugf("task %d rebuilt success", id)
