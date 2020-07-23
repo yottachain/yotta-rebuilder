@@ -10,6 +10,7 @@ const (
 	_                   = iota
 	UpdateUspaceMessage //UpdateUspaceMessage message type
 	PunishMessage       //PunishMessage message type
+	RebuiltMessage      //RebuiltMessage message type
 )
 
 const (
@@ -19,6 +20,8 @@ const (
 	TaskID = "taskID"
 	//MinerID tag
 	MinerID = "minerID"
+	//RebuilderID tag
+	RebuilderID = "rebuilderID"
 	//BlockID tag
 	BlockID = "blockID"
 	//ShardID tag
@@ -167,9 +170,10 @@ type VNI struct {
 
 //Block block struct
 type Block struct {
-	ID  int64 `bson:"_id"`
-	VNF int32 `bson:"VNF"`
-	AR  int32 `bson:"AR"`
+	ID   int64 `bson:"_id"`
+	VNF  int32 `bson:"VNF"`
+	AR   int32 `bson:"AR"`
+	SNID int32 `bson:"snId"`
 }
 
 //Shard shard struct

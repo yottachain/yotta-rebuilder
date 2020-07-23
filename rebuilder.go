@@ -122,6 +122,21 @@ func syncNode(cli *mongo.Client, node *Node, excludeAddrPrefix string) error {
 			entry.WithError(err).Warnf("updating record of node %d", node.ID)
 			return err
 		}
+		if updatedNode.Status == 3 {
+			//重建完毕，状态改为3，删除旧任务
+			collectionRM := cli.Database(RebuilderDB).Collection(RebuildMinerTab)
+			collectionRS := cli.Database(RebuilderDB).Collection(RebuildShardTab)
+			_, err := collectionRS.DeleteMany(context.Background(), bson.M{"minerID": updatedNode.ID})
+			if err != nil {
+				entry.WithField(MinerID, updatedNode.ID).WithError(err).Error("delete old shard-rebuildng tasks")
+				return nil
+			}
+			_, err = collectionRM.UpdateOne(context.Background(), bson.M{"_id": updatedNode.ID}, bson.M{"$set": bson.M{"from": 0, "to": 0, "status": 3}})
+			if err != nil {
+				entry.WithField(MinerID, updatedNode.ID).WithError(err).Error("update rebuild miner status to 3")
+			}
+			return nil
+		}
 	}
 	return nil
 }
@@ -318,17 +333,29 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 			}
 			curShard.Close(context.Background())
 			if len(shards) == 0 {
-				//重建完毕，状态改为3，删除旧任务
-				_, err := collectionRS.DeleteMany(context.Background(), bson.M{"minerID": miner.ID})
+				msg := &pb.RebuiltMessage{NodeID: miner.ID}
+				b, err := proto.Marshal(msg)
 				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Error("delete old shard-rebuildng tasks")
+					entry.WithError(err).Error("marshaling RebuiltMessage failed")
 					continue
 				}
-				_, err = collectionRM.UpdateOne(context.Background(), bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{"from": 0, "to": 0, "status": 3}})
-				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Error("update rebuild miner status to 3")
+				snID := int(miner.ID) % len(rebuilder.mqClis)
+				ret := rebuilder.mqClis[snID].Send(fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
+				if !ret {
+					entry.Warnf("sending RebuiltMessage of miner %d failed", miner.ID)
 				}
 				continue
+				// //重建完毕，状态改为3，删除旧任务
+				// _, err := collectionRS.DeleteMany(context.Background(), bson.M{"minerID": miner.ID})
+				// if err != nil {
+				// 	entry.WithField(MinerID, miner.ID).WithError(err).Error("delete old shard-rebuildng tasks")
+				// 	continue
+				// }
+				// _, err = collectionRM.UpdateOne(context.Background(), bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{"from": 0, "to": 0, "status": 3}})
+				// if err != nil {
+				// 	entry.WithField(MinerID, miner.ID).WithError(err).Error("update rebuild miner status to 3")
+				// }
+				// continue
 			}
 			_, err = collectionRS.InsertMany(context.Background(), shards)
 			if err != nil {
@@ -351,44 +378,54 @@ func (rebuilder *Rebuilder) reaper() {
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	for {
-		for {
-			cur, err := collectionRM.Find(context.Background(), bson.M{})
+		cur, err := collectionRM.Find(context.Background(), bson.M{})
+		if err != nil {
+			entry.WithError(err).Error("fetching miners")
+			time.Sleep(time.Duration(rebuilder.Params.ProcessReaperInterval) * time.Second)
+			continue
+		}
+		for cur.Next(context.Background()) {
+			miner := new(RebuildMiner)
+			err := cur.Decode(miner)
 			if err != nil {
-				entry.WithError(err).Error("fetching miners")
-				time.Sleep(time.Duration(rebuilder.Params.ProcessReaperInterval) * time.Second)
+				entry.WithError(err).Warn("decoding miner")
 				continue
 			}
-			for cur.Next(context.Background()) {
-				miner := new(RebuildMiner)
-				err := cur.Decode(miner)
-				if err != nil {
-					entry.WithError(err).Warn("decoding miner")
-					continue
-				}
-				_, err = collectionRS.DeleteMany(context.Background(), bson.M{"minerID": miner.ID, "_id": bson.M{"$lt": miner.From}})
-				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Error("delete old shard-rebuilding tasks")
-				}
+			_, err = collectionRS.DeleteMany(context.Background(), bson.M{"minerID": miner.ID, "_id": bson.M{"$lt": miner.From}})
+			if err != nil {
+				entry.WithField(MinerID, miner.ID).WithError(err).Error("delete finished shard-rebuilding tasks")
 			}
 		}
+		time.Sleep(time.Duration(rebuilder.Params.ProcessReaperInterval) * time.Second)
 	}
 }
 
 //GetRebuildTasks get rebuild tasks
 func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription, error) {
-	entry := log.WithFields(log.Fields{Function: "GetRebuildTasks"})
-	entry.Debug("call GetRebuildTasks function")
+	entry := log.WithFields(log.Fields{Function: "GetRebuildTasks", RebuilderID: id})
+	entry.Debug("get rebuild tasks")
 	collectionRN := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
 	collectionAB := rebuilder.analysisdbClient.Database(MetaDB).Collection(Blocks)
 	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
-	snCount := int32(len(rebuilder.mqClis))
-	snID := id % snCount
+	rbNode := new(Node)
+	err := collectionRN.FindOne(context.Background(), bson.M{"_id": id}).Decode(rbNode)
+	if err != nil {
+		entry.WithError(err).Error("fetch rebuilder miner")
+		return nil, err
+	}
+	if rbNode.Status > 1 || rbNode.Weight == 0 {
+		err := fmt.Errorf("no tasks can be allocated to miner %d", id)
+		entry.WithError(err).Errorf("status of rebuilder miner is %d, weight is %f", rbNode.Status, rbNode.Weight)
+		return nil, err
+	}
+	// snCount := int32(len(rebuilder.mqClis))
+	// snID := id % snCount
 	opt := new(options.FindOptions)
 	opt.Sort = bson.M{"timestamp": 1}
-	cur, err := collectionRM.Find(context.Background(), bson.M{"_id": bson.M{"$mod": bson.A{snCount, snID}}, "status": 2}, opt)
+	cur, err := collectionRM.Find(context.Background(), bson.M{"status": 2}, opt)
 	if err != nil {
 		entry.WithError(err).Error("fetch rebuildable miners")
 		return nil, err
@@ -426,20 +463,20 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 			updateTime := time.Now().UnixNano()
 			result, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": shard.ID, "timestamp": shard.Timestamp}, bson.M{"$set": bson.M{"timestamp": updateTime}})
 			if err != nil {
-				entry.WithField(MinerID, miner.ID).WithError(err).Errorf("update timestamp of rebuildable shard: %d", shard.ID)
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Error("update timestamp of rebuildable shard failed")
 				i--
 				continue
 			}
 			if result.ModifiedCount == 0 {
-				entry.WithField(MinerID, miner.ID).Warnf("update timestamp of rebuildable shard failed: %d", shard.ID)
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Warnf("update timestamp of rebuildable shard failed")
 				i--
 				continue
 			}
-			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("update timestamp of shard task to %d", updateTime)
+			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(ShardID, shard.ID).Debugf("update timestamp of shard task to %d", updateTime)
 			block := new(Block)
 			err = collectionAB.FindOne(context.Background(), bson.M{"_id": shard.BlockID}).Decode(block)
 			if err != nil {
-				entry.WithField(MinerID, miner.ID).WithError(err).Error("decoding block")
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Error("decoding block")
 				collectionRU.InsertOne(context.Background(), shard)
 				collectionRS.UpdateOne(context.Background(), bson.M{"_id": shard.ID}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
 				i--
@@ -452,52 +489,52 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 				s := new(Shard)
 				err := collectionAS.FindOne(context.Background(), bson.M{"_id": i}).Decode(s)
 				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Errorf("decoding sibling shard %d of shard %d", i, shard.ID)
+					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("decoding sibling shard %d", i)
 					continue
 				}
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debugf("decode sibling shard info: %d", s.ID)
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("decode sibling shard info %d: %d", i, s.ID)
 				n := new(Node)
 				err = collectionRN.FindOne(context.Background(), bson.M{"_id": s.NodeID}).Decode(n)
 				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Errorf("decoding miner info of sibling shard %d of shard %d", i, shard.ID)
+					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("decoding miner info of sibling shard %d: %d", i, s.ID)
 					continue
 				}
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debugf("decode miner info of sibling shard %d: %d", s.ID, n.ID)
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("decode miner info of sibling shard %d: %d", s.ID, n.ID)
 				hashs = append(hashs, s.VHF.Data)
 				locations = append(locations, &pb.P2PLocation{NodeId: n.NodeID, Addrs: n.Addrs})
 			}
 			var b []byte
 			if shard.Type == 0x68b3 {
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debug("create LRC rebuilding task")
 				//LRC
 				task := new(pb.TaskDescription)
-				task.Id = Int64ToBytes(shard.ID)
+				task.Id = append(Int64ToBytes(shard.ID), Uint16ToBytes(uint16(block.SNID))...)
 				task.Hashs = hashs
 				task.ParityShardCount = shard.ParityShardCount
 				task.RecoverId = int32(shard.ID - shard.BlockID)
 				task.Locations = locations
 				b, err = proto.Marshal(task)
 				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Errorf("marshaling LRC task: %d", shard.ID)
+					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("marshaling LRC task: %d", shard.ID)
 					i--
 					continue
 				}
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("create LRC rebuilding task: %+v", task)
 			} else if shard.Type == 0xc258 {
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithField(BlockID, block.ID).Debug("create replication rebuilding task")
 				//replication
 				task := new(pb.TaskDescriptionCP)
-				task.Id = Int64ToBytes(shard.ID)
+				task.Id = append(Int64ToBytes(shard.ID), Uint16ToBytes(uint16(block.SNID))...)
 				task.DataHash = shard.VHF
 				task.Locations = locations
 				b, err = proto.Marshal(task)
 				if err != nil {
-					entry.WithField(MinerID, miner.ID).WithError(err).Errorf("marshaling replication task: %d", shard.ID)
+					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("marshaling replication task: %d", shard.ID)
 					i--
 					continue
 				}
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("create replication rebuilding task: %+v", task)
 			}
 			if (shard.Type == 0x68b3 && len(locations) < int(block.AR)) || (shard.Type == 0xc258 && len(locations) == 0) {
-				entry.WithField(MinerID, miner.ID).WithError(err).Errorf("sibling shards are not enough for shard %d, only %d shards", shard.ID, len(hashs))
+				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("sibling shards are not enough, only %d shards", len(hashs))
 				collectionRU.InsertOne(context.Background(), shard)
 				collectionRS.UpdateOne(context.Background(), bson.M{"_id": shard.ID}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
 				i--
@@ -510,15 +547,18 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		if i == 0 {
 			continue
 		}
-		tasks.SnID = miner.ID % snCount
+		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d", len(tasks.Tasklist))
 		return tasks, nil
 	}
-	return nil, errors.New("no tasks can be allocated")
+	err = errors.New("no tasks can be allocated")
+	entry.Warn(err)
+	return nil, err
 }
 
 //UpdateTaskStatus update task status
 func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) {
 	entry := log.WithFields(log.Fields{Function: "UpdateTaskStatus"})
+	entry.Infof("received rebuild status: %d results", len(result.Id))
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	for i, b := range result.Id {
 		id := BytesToInt64(b)
