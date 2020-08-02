@@ -199,6 +199,8 @@ var (
 	DefaultMiscRebuildShardMinerTaskBatchSize int = 1000
 	//DefaultMiscExcludeAddrPrefix default value of MiscExcludeAddrPrefix
 	DefaultMiscExcludeAddrPrefix string = ""
+	//DefaultMiscRetryCount default value of MiscRetryCount
+	DefaultMiscRetryCount int = 3
 )
 
 func initFlag() {
@@ -256,4 +258,6 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.MiscRebuildShardMinerTaskBatchSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscRebuildShardMinerTaskBatchSizeField))
 	rootCmd.PersistentFlags().String(ytrebuilder.MiscExcludeAddrPrefixField, DefaultMiscExcludeAddrPrefix, "Miners with this value as address prefix is considered as valid")
 	viper.BindPFlag(ytrebuilder.MiscExcludeAddrPrefixField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscExcludeAddrPrefixField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MiscRetryCountField, DefaultMiscRetryCount, "max retry count when rebuilding failed")
+	viper.BindPFlag(ytrebuilder.MiscRetryCountField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscRetryCountField))
 }

@@ -65,6 +65,8 @@ misc:
   rebuild-shard-miner-task-batch-size: 1000
   #允许以该参数指定的值作为前缀的矿机地址为有效地址，默认为空，一般用于内网测试环境
   exclude-addr-prefix: "/ip4/172.17"
+  #修复失败分片的重试次数，默认为3
+  retry-count: 3
 ```
 启动服务：
 ```

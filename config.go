@@ -54,6 +54,8 @@ const (
 	MiscRebuildShardMinerTaskBatchSizeField = "misc.rebuild-shard-miner-task-batch-size"
 	//MiscExcludeAddrPrefixField Field name of misc.exclude-addr-prefix config
 	MiscExcludeAddrPrefixField = "misc.exclude-addr-prefix"
+	//MiscRetryCountField Field name of misc.retry-count config
+	MiscRetryCountField = "misc.retry-count"
 )
 
 //Config system configuration
@@ -98,4 +100,5 @@ type MiscConfig struct {
 	RebuildShardTaskBatchSize       int    `mapstructure:"rebuild-shard-task-batch-size"`
 	RebuildShardMinerTaskBatchSize  int    `mapstructure:"rebuild-shard-miner-task-batch-size"`
 	ExcludeAddrPrefix               string `mapstructure:"exclude-addr-prefix"`
+	RetryCount                      int    `mapstructure:"retry-count"`
 }

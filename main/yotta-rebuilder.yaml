@@ -31,3 +31,4 @@ misc:
   rebuild-shard-task-batch-size: 10000
   rebuild-shard-miner-task-batch-size: 1000
   exclude-addr-prefix: "/ip4/172.17"
+  retry-count: 3

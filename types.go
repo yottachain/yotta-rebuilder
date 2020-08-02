@@ -215,6 +215,7 @@ type RebuildShard struct {
 	Type             int32  `bson:"type"`
 	ParityShardCount int32  `bson:"parityShardCount"`
 	Timestamp        int64  `bson:"timestamp"`
+	ErrCount         int32  `bson:"errCount"`
 }
 
 //relative DB and collection name
