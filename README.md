@@ -87,6 +87,7 @@ analysisdb为analysis服务的数据库，该数据库主要用于获取矿机�
 | to |int64 |	被重建分片范围的结束ID |
 | status | int32 | 矿机状态：2-待重建或重建中，3-重建完成 |
 | timestamp	| int64	| 记录重建各阶段的时间戳 |
+
 另外需要为`RebuildMiner`集合添加索引：
 ```
 mongoshell> db.RebuildMiner.createIndex({status: 1, timestamp: 1})
@@ -104,6 +105,7 @@ mongoshell> db.RebuildMiner.createIndex({status: 1, timestamp: 1})
 | parityShardCount | int32 | 校验分片数量 |
 | timestamp	| int64	| 记录分片在重建各阶段的时间戳 |
 | errCount | int32 | 分片重建错误次数 |
+
 另外需要为`RebuildShard`集合添加索引：
 ```
 mongoshell> db.RebuildShard.createIndex({minerID: 1, timestamp: 1})
