@@ -213,7 +213,9 @@ type RebuildShard struct {
 	MinerID          int32  `bson:"minerID"`
 	BlockID          int64  `bson:"blockID"`
 	Type             int32  `bson:"type"`
+	VNF              int32  `bson:"VNF"`
 	ParityShardCount int32  `bson:"parityShardCount"`
+	SNID             int32  `bson:"snID"`
 	Timestamp        int64  `bson:"timestamp"`
 	ErrCount         int32  `bson:"errCount"`
 }
