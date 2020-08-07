@@ -24,6 +24,6 @@ func (server *Server) GetRebuildTasks(ctx context.Context, req *pb.Int32Msg) (*p
 
 //UpdateTaskStatus implemented UpdateTaskStatus function of Rebuilder
 func (server *Server) UpdateTaskStatus(ctx context.Context, req *pb.MultiTaskOpResult) (*pb.Empty, error) {
-	server.Rebuilder.UpdateTaskStatus(req)
-	return &pb.Empty{}, nil
+	err := server.Rebuilder.UpdateTaskStatus(req)
+	return &pb.Empty{}, err
 }

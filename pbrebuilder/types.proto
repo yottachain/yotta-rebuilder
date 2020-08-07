@@ -283,5 +283,6 @@ message TaskOpResult{
 //MessageID:1b31
 message MultiTaskOpResult{
     repeated bytes id = 1; 
-    repeated int32 RES=2;
+	repeated int32 RES = 2;
+	int32 NodeID = 3;
 }

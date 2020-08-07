@@ -56,6 +56,8 @@ const (
 	MiscExcludeAddrPrefixField = "misc.exclude-addr-prefix"
 	//MiscRetryCountField Field name of misc.retry-count config
 	MiscRetryCountField = "misc.retry-count"
+	//MiscMaxCacheSizeField Field name of misc.max-cache-size config
+	MiscMaxCacheSizeField = "misc.max-cache-size"
 )
 
 //Config system configuration
@@ -101,4 +103,5 @@ type MiscConfig struct {
 	RebuildShardMinerTaskBatchSize  int    `mapstructure:"rebuild-shard-miner-task-batch-size"`
 	ExcludeAddrPrefix               string `mapstructure:"exclude-addr-prefix"`
 	RetryCount                      int    `mapstructure:"retry-count"`
+	MaxCacheSize                    int64  `mapstructure:"max-cache-size"`
 }
