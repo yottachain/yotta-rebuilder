@@ -29,7 +29,7 @@ func (cache *Cache) IsFull() bool {
 	entry := log.WithFields(log.Fields{Function: "IsFull"})
 	cache.lock.RLock()
 	defer cache.lock.RUnlock()
-	entry.Debugf("size of cache: %d", len(cache.Items))
+	entry.Tracef("size of cache: %d", len(cache.Items))
 	if uint64(len(cache.Items)) >= cache.CacheSize {
 		return true
 	}
@@ -52,7 +52,7 @@ func (cache *Cache) Put(shardID int64, hashs [][]byte, nodeIDs []int32) bool {
 		return false
 	}
 	cache.Items[shardID] = &CacheItem{Hashs: hashs, NodeIDs: nodeIDs}
-	entry.Debugf("put item %d, size of cache: %d", shardID, len(cache.Items))
+	entry.Tracef("put item %d, size of cache: %d", shardID, len(cache.Items))
 	return true
 }
 
@@ -62,5 +62,5 @@ func (cache *Cache) Delete(shardID int64) {
 	cache.lock.Lock()
 	defer cache.lock.Unlock()
 	delete(cache.Items, shardID)
-	entry.Debugf("deleted item %d, size of cache: %d", shardID, len(cache.Items))
+	entry.Tracef("deleted item %d, size of cache: %d", shardID, len(cache.Items))
 }

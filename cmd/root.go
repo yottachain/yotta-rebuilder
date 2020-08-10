@@ -203,6 +203,8 @@ var (
 	DefaultMiscRetryCount int = 3
 	//DefaultMiscMaxCacheSize default value of MiscMaxCacheSize
 	DefaultMiscMaxCacheSize int64 = 100000
+	//DefaultMiscFetchTaskTimeGap default value of MiscFetchTaskTimeGap
+	DefaultMiscFetchTaskTimeGap int32 = 500
 )
 
 func initFlag() {
@@ -264,4 +266,6 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.MiscRetryCountField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscRetryCountField))
 	rootCmd.PersistentFlags().Int64(ytrebuilder.MiscMaxCacheSizeField, DefaultMiscMaxCacheSize, "max cache size of sibling shards, default value is 100000")
 	viper.BindPFlag(ytrebuilder.MiscMaxCacheSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscMaxCacheSizeField))
+	rootCmd.PersistentFlags().Int32(ytrebuilder.MiscFetchTaskTimeGapField, DefaultMiscFetchTaskTimeGap, "time gap between fetching rebuilding tasks operation, default value is 500(ms)")
+	viper.BindPFlag(ytrebuilder.MiscFetchTaskTimeGapField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscFetchTaskTimeGapField))
 }

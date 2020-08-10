@@ -58,6 +58,8 @@ const (
 	MiscRetryCountField = "misc.retry-count"
 	//MiscMaxCacheSizeField Field name of misc.max-cache-size config
 	MiscMaxCacheSizeField = "misc.max-cache-size"
+	//MiscFetchTaskTimeGapField Field name of misc.fetch-task-time-gap
+	MiscFetchTaskTimeGapField = "misc.fetch-task-time-gap"
 )
 
 //Config system configuration
@@ -104,4 +106,5 @@ type MiscConfig struct {
 	ExcludeAddrPrefix               string `mapstructure:"exclude-addr-prefix"`
 	RetryCount                      int    `mapstructure:"retry-count"`
 	MaxCacheSize                    int64  `mapstructure:"max-cache-size"`
+	FetchTaskTimeGap                int32  `mapstructure:"fetch-task-time-gap"`
 }

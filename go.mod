@@ -7,6 +7,7 @@ require (
 	github.com/fastly/go-utils v0.0.0-20180712184237-d95a45783239 // indirect
 	github.com/golang/protobuf v1.4.1
 	github.com/jehiah/go-strftime v0.0.0-20171201141054-1d33003b3869 // indirect
+	github.com/juju/ratelimit v1.0.1
 	github.com/lestrrat-go/file-rotatelogs v2.3.0+incompatible
 	github.com/libp2p/go-libp2p-core v0.3.0
 	github.com/libp2p/go-libp2p-peer v0.2.0 // indirect

@@ -33,3 +33,4 @@ misc:
   exclude-addr-prefix: "/ip4/172.17"
   retry-count: 3
   max-cache-size: 100000
+  fetch-task-time-gap: 500
