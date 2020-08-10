@@ -14,6 +14,12 @@ func main() {
 	cmd.Execute()
 }
 
+func main2() {
+	b := ytrebuilder.Int64ToBytes(6850675130134606064)
+	t := ytrebuilder.BytesToInt32(b[0:4])
+	fmt.Println(t)
+}
+
 func main0() {
 	cli, err := ytrebuilder.NewClient("192.168.36.132:8080")
 	if err != nil {

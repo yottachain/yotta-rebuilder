@@ -67,6 +67,10 @@ misc:
   exclude-addr-prefix: "/ip4/172.17"
   #修复失败分片的重试次数，默认为3
   retry-count: 3
+  #最大缓存大小，缓存用于每个分片重建时相关分片的缓存，默认值为100000
+  max-cache-size: 100000
+  #两次获取重建任务操作之间的时间间隔，默认值为500ms
+  fetch-task-time-gap: 500
 ```
 启动服务：
 ```
@@ -74,7 +78,7 @@ $ nohup ./rebuilder &
 ```
 如果不想使用配置文件也可以通过命令行标志来设置参数，标志指定的值也可以覆盖掉配置文件中对应的属性：
 ```
-$ ./rebuilder --bind-addr ":8080" --analysisdb-url "mongodb://127.0.0.1:27017/?connect=direct" --rebuilderdb-url "mongodb://127.0.0.1:27017/?connect=direct" --auramq.subscriber-buffer-size "1024" --auramq.ping-wait "30" --auramq.read-wait "60" --auramq.write-wait "10" --auramq.miner-sync-topic "sync" --auramq.all-sn-urls "ws://172.17.0.2:8787/ws,ws://172.17.0.3:8787/ws,ws://172.17.0.4:8787/ws" --auramq.account "yottanalysis" --auramq.private-key "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7" --auramq.client-id "yottarebuilder" --logger.output "file" --logger.file-path "./rebuilder.log" --logger.rotation-time "24" --logger.max-age "240" --logger.level "Info" --misc.rebuildable-miner-time-gap "14400" --misc.process-rebuildable-miner-interval "10" --misc.process-rebuildable-shard-interval "10" --misc.process-reaper-interval "60" --misc.rebuild-shard-expired-time "1200" --misc.rebuild-shard-task-batch-size "10000" --misc.rebuild-shard-miner-task-batch-size "1000" --misc.exclude-addr-prefix "/ip4/172.17" --misc.retry-count "3"
+$ ./rebuilder --bind-addr ":8080" --analysisdb-url "mongodb://127.0.0.1:27017/?connect=direct" --rebuilderdb-url "mongodb://127.0.0.1:27017/?connect=direct" --auramq.subscriber-buffer-size "1024" --auramq.ping-wait "30" --auramq.read-wait "60" --auramq.write-wait "10" --auramq.miner-sync-topic "sync" --auramq.all-sn-urls "ws://172.17.0.2:8787/ws,ws://172.17.0.3:8787/ws,ws://172.17.0.4:8787/ws" --auramq.account "yottanalysis" --auramq.private-key "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7" --auramq.client-id "yottarebuilder" --logger.output "file" --logger.file-path "./rebuilder.log" --logger.rotation-time "24" --logger.max-age "240" --logger.level "Info" --misc.rebuildable-miner-time-gap "14400" --misc.process-rebuildable-miner-interval "10" --misc.process-rebuildable-shard-interval "10" --misc.process-reaper-interval "60" --misc.rebuild-shard-expired-time "1200" --misc.rebuild-shard-task-batch-size "10000" --misc.rebuild-shard-miner-task-batch-size "1000" --misc.exclude-addr-prefix "/ip4/172.17" --misc.retry-count "3" --misc.max-cache-size "100000" --misc.fetch-task-time-gap "500"
 ```
 SN端目前测试版本只需要重新编译`YDTNMgmtJavaBinding`项目的`dev`分支并替换原有jar包即可
 
@@ -128,7 +132,7 @@ mongoshell> db.Node.createIndex({status:1, timestamp:1})
 
 ## 3. 执行流程
 * 重建程序启动后，会从各SN实时同步矿机信息到本地`rebuilder`库中的`Node`表，当发现有矿机的`status`属性变为2后，会在本地`Node`库为其增加一个`tasktimestamp`字段，其值为当前时间的时间戳
-* 矿机筛选进程每隔`process-rebuildable-miner-interval`秒从`Node`表筛选出`status=2`并且`tasktimestamp`小于当前时间减去`rebuildable-miner-time-gap`的矿机（为了确保`status`变为2后没有新分片写入矿机），并j将相关信息写入`RebuildMiner`表
+* 矿机筛选进程每隔`process-rebuildable-miner-interval`秒从`Node`表筛选出`status=2`并且`tasktimestamp`小于当前时间减去`rebuildable-miner-time-gap`的矿机（为了确保`status`变为2后没有新分片写入矿机），并将相关信息写入`RebuildMiner`表
 * 分片刷新进程每隔`process-rebuildable-shard-interval`秒从`metabase`库的`shards`表中根据矿机ID按照`_id`顺序取出`rebuild-shard-task-batch-size`个分片，然后构造重建任务并写入`RebuildShard`表
 * 没有重建任务的矿机在上报时SN会从重建程序获取重建任务，重建程序首先判断上报的矿机是否`status`为1且`weight`大于0，然后从`RebuildShard`表中获取`rebuild-shard-miner-task-batch-size`个重建任务，要求每一条重建任务的`timestamp`的值必须小于当前时间减去`rebuild-shard-expired-time`（即任务是第一次被发出或发出一段时间后没有收到响应），获取任务后同时将`timestamp`修改为当前时间的时间戳，每个任务会根据不同的重建类型获取相应信息后封装成protobuf格式消息，打包后发送给矿机
 * 矿机收到消息后解析出重建任务，并依次执行重建，全部完成后会将所有重建结果打包发送给对应SN
