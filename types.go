@@ -202,6 +202,8 @@ type RebuildMiner struct {
 	ID        int32 `bson:"_id"`
 	From      int64 `bson:"from"`
 	To        int64 `bson:"to"`
+	RangeFrom int64 `bson:"rangeFrom"`
+	RangeTo   int64 `bson:"rangeTo"`
 	Status    int32 `bson:"status"`
 	Timestamp int64 `bson:"timestamp"`
 }

@@ -30,7 +30,8 @@ misc:
   rebuild-shard-expired-time: 1200
   rebuild-shard-task-batch-size: 10000
   rebuild-shard-miner-task-batch-size: 1000
-  exclude-addr-prefix: "/ip4/172.17"
   retry-count: 3
   max-cache-size: 100000
   fetch-task-time-gap: 500
+  sync-pool-length: 5000
+  sync-queue-length: 10000

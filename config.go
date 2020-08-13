@@ -52,14 +52,16 @@ const (
 	MiscRebuildShardTaskBatchSizeField = "misc.rebuild-shard-task-batch-size"
 	//MiscRebuildShardMinerTaskBatchSizeField Field name of misc.rebuild-shard-miner-task-batch-size
 	MiscRebuildShardMinerTaskBatchSizeField = "misc.rebuild-shard-miner-task-batch-size"
-	//MiscExcludeAddrPrefixField Field name of misc.exclude-addr-prefix config
-	MiscExcludeAddrPrefixField = "misc.exclude-addr-prefix"
 	//MiscRetryCountField Field name of misc.retry-count config
 	MiscRetryCountField = "misc.retry-count"
 	//MiscMaxCacheSizeField Field name of misc.max-cache-size config
 	MiscMaxCacheSizeField = "misc.max-cache-size"
 	//MiscFetchTaskTimeGapField Field name of misc.fetch-task-time-gap
 	MiscFetchTaskTimeGapField = "misc.fetch-task-time-gap"
+	//MiscSyncPoolLengthField Field name of misc.sync-pool-length config
+	MiscSyncPoolLengthField = "misc.sync-pool-length"
+	//MiscSyncQueueLengthField Field name of misc.sync-queue-length config
+	MiscSyncQueueLengthField = "misc.sync-queue-length"
 )
 
 //Config system configuration
@@ -96,15 +98,16 @@ type LogConfig struct {
 
 //MiscConfig miscellaneous configuration
 type MiscConfig struct {
-	RebuildableMinerTimeGap         int    `mapstructure:"rebuildable-miner-time-gap"`
-	ProcessRebuildableMinerInterval int    `mapstructure:"process-rebuildable-miner-interval"`
-	ProcessRebuildableShardInterval int    `mapstructure:"process-rebuildable-shard-interval"`
-	ProcessReaperInterval           int    `mapstructure:"process-reaper-interval"`
-	RebuildShardExpiredTime         int    `mapstructure:"rebuild-shard-expired-time"`
-	RebuildShardTaskBatchSize       int    `mapstructure:"rebuild-shard-task-batch-size"`
-	RebuildShardMinerTaskBatchSize  int    `mapstructure:"rebuild-shard-miner-task-batch-size"`
-	ExcludeAddrPrefix               string `mapstructure:"exclude-addr-prefix"`
-	RetryCount                      int    `mapstructure:"retry-count"`
-	MaxCacheSize                    int64  `mapstructure:"max-cache-size"`
-	FetchTaskTimeGap                int32  `mapstructure:"fetch-task-time-gap"`
+	RebuildableMinerTimeGap         int   `mapstructure:"rebuildable-miner-time-gap"`
+	ProcessRebuildableMinerInterval int   `mapstructure:"process-rebuildable-miner-interval"`
+	ProcessRebuildableShardInterval int   `mapstructure:"process-rebuildable-shard-interval"`
+	ProcessReaperInterval           int   `mapstructure:"process-reaper-interval"`
+	RebuildShardExpiredTime         int   `mapstructure:"rebuild-shard-expired-time"`
+	RebuildShardTaskBatchSize       int   `mapstructure:"rebuild-shard-task-batch-size"`
+	RebuildShardMinerTaskBatchSize  int   `mapstructure:"rebuild-shard-miner-task-batch-size"`
+	RetryCount                      int   `mapstructure:"retry-count"`
+	MaxCacheSize                    int64 `mapstructure:"max-cache-size"`
+	FetchTaskTimeGap                int32 `mapstructure:"fetch-task-time-gap"`
+	SyncPoolLength                  int   `mapstructure:"sync-pool-length"`
+	SyncQueueLength                 int   `mapstructure:"sync-queue-length"`
 }
