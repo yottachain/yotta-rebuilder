@@ -241,6 +241,7 @@ var (
 	RebuildMinerTab   = "RebuildMiner"
 	RebuildShardTab   = "RebuildShard"
 	UnrebuildShardTab = "UnrebuildShard"
+	CPSRecordTab      = "CPSRecord"
 )
 
 //index type of node and supernode collection

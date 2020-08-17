@@ -32,13 +32,14 @@ type Rebuilder struct {
 	rebuilderdbClient *mongo.Client
 	NodeManager       *NodeManager
 	Cache             *Cache
+	Compensation      *CompensationConfig
 	Params            *MiscConfig
 	mqClis            map[int]*ytsync.Service
 	ratelimiter       *rl.Bucket
 }
 
 //New create a new rebuilder instance
-func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, conf *MiscConfig) (*Rebuilder, error) {
+func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
 	entry := log.WithFields(log.Fields{Function: "New"})
 	analysisdbClient, err := mongo.Connect(context.Background(), options.Client().ApplyURI(analysisDBURL))
 	if err != nil {
@@ -84,7 +85,7 @@ func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, conf *MiscC
 		return nil, err
 	}
 	ratelimiter := rl.NewBucket(time.Millisecond*time.Duration(conf.FetchTaskTimeGap), 2)
-	rebuilder := &Rebuilder{analysisdbClient: analysisdbClient, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Params: conf, mqClis: m, ratelimiter: ratelimiter}
+	rebuilder := &Rebuilder{analysisdbClient: analysisdbClient, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Compensation: cpsConf, Params: conf, mqClis: m, ratelimiter: ratelimiter}
 	return rebuilder, nil
 }
 
@@ -179,6 +180,7 @@ func dedup(urls []string) []string {
 //Start starting rebuilding process
 func (rebuilder *Rebuilder) Start() {
 	entry := log.WithFields(log.Fields{Function: "Start"})
+	rebuilder.Preprocess()
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
 	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
@@ -239,6 +241,7 @@ func (rebuilder *Rebuilder) Start() {
 		curShard.Close(context.Background())
 	}
 
+	go rebuilder.Compensate()
 	go rebuilder.processRebuildableMiner()
 	go rebuilder.processRebuildableShard()
 	go rebuilder.reaper()
@@ -534,6 +537,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		entry.WithField(MinerID, miner.ID).Debug("decode miner info")
 		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>2. Decode miner: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 		startTime = time.Now().UnixNano()
+		expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
 		//查找属于当前矿机的未重建或重建超时分片
 		cur2, err := collectionRS.Find(context.Background(), bson.M{"minerID": miner.ID, "timestamp": bson.M{"$lt": time.Now().UnixNano() - int64(rebuilder.Params.RebuildShardExpiredTime*1000000000)}})
 		if err != nil {
@@ -660,7 +664,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		}
 		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d", len(tasks.Tasklist))
 		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
-
+		tasks.ExpiredTime = expiredTime
 		return tasks, nil
 	}
 	err = errors.New("no tasks can be allocated")
@@ -671,6 +675,9 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 //UpdateTaskStatus update task status
 func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) error {
 	nodeID := result.NodeID
+	if time.Now().Unix() > result.ExpiredTime {
+		return errors.New("tasks expired")
+	}
 	startTime := time.Now().UnixNano()
 	entry := log.WithFields(log.Fields{Function: "UpdateTaskStatus"})
 	entry.WithField(MinerID, nodeID).Infof("received rebuilding status: %d results", len(result.Id))

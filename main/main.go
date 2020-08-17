@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	ytrebuilder "github.com/yottachain/yotta-rebuilder"
@@ -14,10 +15,29 @@ func main() {
 	cmd.Execute()
 }
 
-func main2() {
-	b := ytrebuilder.Int64ToBytes(6850675130134606064)
-	t := ytrebuilder.BytesToInt32(b[0:4])
-	fmt.Println(t)
+func main1() {
+	start := int64(0)
+	i := 0
+	for {
+		shardsRebuilt, err := ytrebuilder.GetRebuildShards("http://192.168.36.132:8091", start, 100, time.Now().Unix()-int64(180))
+		if err != nil {
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		for _, sr := range shardsRebuilt.ShardsRebuild {
+			i++
+			fmt.Printf("%d. %d: %d\n", i, sr.ID, sr.VFI)
+		}
+		if shardsRebuilt.More {
+			start = shardsRebuilt.Next
+			continue
+		} else {
+			if len(shardsRebuilt.ShardsRebuild) > 0 {
+				start = shardsRebuilt.ShardsRebuild[len(shardsRebuilt.ShardsRebuild)-1].ID + 1
+			}
+			time.Sleep(time.Duration(10) * time.Second)
+		}
+	}
 }
 
 func main0() {

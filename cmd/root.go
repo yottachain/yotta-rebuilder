@@ -36,7 +36,7 @@ var rootCmd = &cobra.Command{
 		// 	panic("count of mongoDB URL is not equal to SN count\n")
 		// }
 		initLog(config)
-		rebuilder, err := ytrebuilder.New(config.AnalysisDBURL, config.RebuilderDBURL, config.AuraMQ, config.MiscConfig)
+		rebuilder, err := ytrebuilder.New(config.AnalysisDBURL, config.RebuilderDBURL, config.AuraMQ, config.Compensation, config.MiscConfig)
 		if err != nil {
 			panic(fmt.Sprintf("fatal error when starting rebuilder service: %s\n", err))
 		}
@@ -172,6 +172,15 @@ var (
 	//DefaultAuramqClientID default value of AuramqClientID
 	DefaultAuramqClientID = "yottarebuilder"
 
+	//DefaultCompensationAllSyncURLs default value of CompensationAllSyncURLs
+	DefaultCompensationAllSyncURLs = []string{}
+	//DefaultCompensationBatchSize default value of CompensationBatchSize
+	DefaultCompensationBatchSize = 100
+	//DefaultCompensationWaitTime default value of CompensationWaitTime
+	DefaultCompensationWaitTime = 10
+	//DefaultCompensationSkipTime default value of CompensationSkipTime
+	DefaultCompensationSkipTime = 180
+
 	//DefaultLoggerOutput default value of LoggerOutput
 	DefaultLoggerOutput string = "stdout"
 	//DefaultLoggerFilePath default value of LoggerFilePath
@@ -236,6 +245,15 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.AuramqPrivateKeyField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqPrivateKeyField))
 	rootCmd.PersistentFlags().String(ytrebuilder.AuramqClientIDField, DefaultAuramqClientID, "client ID for identifying MQ client")
 	viper.BindPFlag(ytrebuilder.AuramqClientIDField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqClientIDField))
+	//compensation config
+	rootCmd.PersistentFlags().StringSlice(ytrebuilder.CompensationAllSyncURLsField, DefaultCompensationAllSyncURLs, "all URLs of sync services, in the form of --compensation.all-sync-urls \"URL1,URL2,URL3\"")
+	viper.BindPFlag(ytrebuilder.CompensationAllSyncURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationAllSyncURLsField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.CompensationBatchSizeField, DefaultCompensationBatchSize, "batch size when fetching shards that have been rebuilt")
+	viper.BindPFlag(ytrebuilder.CompensationBatchSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationBatchSizeField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.CompensationWaitTimeField, DefaultCompensationWaitTime, "wait time when no new shards rebuit can be fetched")
+	viper.BindPFlag(ytrebuilder.CompensationWaitTimeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationWaitTimeField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.CompensationSkipTimeField, DefaultCompensationSkipTime, "ensure not to fetching rebuilt shards till the end")
+	viper.BindPFlag(ytrebuilder.CompensationSkipTimeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationSkipTimeField))
 	//logger config
 	rootCmd.PersistentFlags().String(ytrebuilder.LoggerOutputField, DefaultLoggerOutput, "Output type of logger(stdout or file)")
 	viper.BindPFlag(ytrebuilder.LoggerOutputField, rootCmd.PersistentFlags().Lookup(ytrebuilder.LoggerOutputField))

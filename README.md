@@ -35,6 +35,21 @@ auramq:
   private-key: "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7"
   #MQ客户端ID，连接SN的MQ时使用，必须保证在MQ server端唯一，默认值为yottarebuilder
   client-id: "yottarebuilder"
+#一致性补偿相关配置
+compensation:
+  #所有SN的重建分片同步地址列表
+  all-sync-urls:
+  - "http://127.0.0.1:8091"
+  - "http://127.0.0.1:8092"
+  - "http://127.0.0.1:8093"
+  - "http://127.0.0.1:8094"
+  - "http://127.0.0.1:8095"
+  #每次取多少个重建分片
+  batch-size: 1000
+  #没有分片可取时的等待时间（秒）
+  wait-time: 10
+  #轮询到比当前时间提前多少秒时停止轮询
+  skip-time: 180
 #日志相关配置
 logger:
   #日志输出类型：stdout为输出到标准输出流，file为输出到文件，默认为stdout，此时只有level属性起作用，其他属性会被忽略
@@ -80,7 +95,7 @@ $ nohup ./rebuilder &
 ```
 如果不想使用配置文件也可以通过命令行标志来设置参数，标志指定的值也可以覆盖掉配置文件中对应的属性：
 ```
-$ ./rebuilder --bind-addr ":8080" --analysisdb-url "mongodb://127.0.0.1:27017/?connect=direct" --rebuilderdb-url "mongodb://127.0.0.1:27017/?connect=direct" --auramq.subscriber-buffer-size "1024" --auramq.ping-wait "30" --auramq.read-wait "60" --auramq.write-wait "10" --auramq.miner-sync-topic "sync" --auramq.all-sn-urls "ws://172.17.0.2:8787/ws,ws://172.17.0.3:8787/ws,ws://172.17.0.4:8787/ws" --auramq.account "yottanalysis" --auramq.private-key "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7" --auramq.client-id "yottarebuilder" --logger.output "file" --logger.file-path "./rebuilder.log" --logger.rotation-time "24" --logger.max-age "240" --logger.level "Info" --misc.rebuildable-miner-time-gap "14400" --misc.process-rebuildable-miner-interval "10" --misc.process-rebuildable-shard-interval "10" --misc.process-reaper-interval "60" --misc.rebuild-shard-expired-time "1200" --misc.rebuild-shard-task-batch-size "10000" --misc.rebuild-shard-miner-task-batch-size "1000" --misc.retry-count "3" --misc.max-cache-size "100000" --misc.fetch-task-time-gap "500" --misc.sync-pool-length "5000" --misc.sync-queue-length "10000"
+$ ./rebuilder --bind-addr ":8080" --analysisdb-url "mongodb://127.0.0.1:27017/?connect=direct" --rebuilderdb-url "mongodb://127.0.0.1:27017/?connect=direct" --auramq.subscriber-buffer-size "1024" --auramq.ping-wait "30" --auramq.read-wait "60" --auramq.write-wait "10" --auramq.miner-sync-topic "sync" --auramq.all-sn-urls "ws://172.17.0.2:8787/ws,ws://172.17.0.3:8787/ws,ws://172.17.0.4:8787/ws" --auramq.account "yottanalysis" --auramq.private-key "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7" --auramq.client-id "yottarebuilder" --compensation.all-sync-urls "http://127.0.0.1:8091,http://127.0.0.1:8092,http://127.0.0.1:8093" --compensation.batch-size "1000" --compensation.wait-time "10" --compensation.skip-time "180" --logger.output "file" --logger.file-path "./rebuilder.log" --logger.rotation-time "24" --logger.max-age "240" --logger.level "Info" --misc.rebuildable-miner-time-gap "14400" --misc.process-rebuildable-miner-interval "10" --misc.process-rebuildable-shard-interval "10" --misc.process-reaper-interval "60" --misc.rebuild-shard-expired-time "1200" --misc.rebuild-shard-task-batch-size "10000" --misc.rebuild-shard-miner-task-batch-size "1000" --misc.retry-count "3" --misc.max-cache-size "100000" --misc.fetch-task-time-gap "500" --misc.sync-pool-length "5000" --misc.sync-queue-length "10000"
 ```
 
 ## 2. 数据库配置：

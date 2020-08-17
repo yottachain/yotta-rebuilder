@@ -27,6 +27,15 @@ const (
 	//AuramqClientIDField Field name of auramq.client-id
 	AuramqClientIDField = "auramq.client-id"
 
+	//CompensationAllSyncURLsField Field name of compensation.all-sync-urls
+	CompensationAllSyncURLsField = "compensation.all-sync-urls"
+	//CompensationBatchSizeField Field name of compensation.batch-size
+	CompensationBatchSizeField = "compensation.batch-size"
+	//CompensationWaitTimeField Field name of compensation.wait-time
+	CompensationWaitTimeField = "compensation.wait-time"
+	//CompensationSkipTimeField Field name of compensation.skip-time
+	CompensationSkipTimeField = "compensation.skip-time"
+
 	//LoggerOutputField Field name of logger.output config
 	LoggerOutputField = "logger.output"
 	//LoggerFilePathField Field name of logger.file-path config
@@ -66,12 +75,13 @@ const (
 
 //Config system configuration
 type Config struct {
-	BindAddr       string        `mapstructure:"bind-addr"`
-	AnalysisDBURL  string        `mapstructure:"analysisdb-url"`
-	RebuilderDBURL string        `mapstructure:"rebuilderdb-url"`
-	AuraMQ         *AuraMQConfig `mapstructure:"auramq"`
-	Logger         *LogConfig    `mapstructure:"logger"`
-	MiscConfig     *MiscConfig   `mapstructure:"misc"`
+	BindAddr       string              `mapstructure:"bind-addr"`
+	AnalysisDBURL  string              `mapstructure:"analysisdb-url"`
+	RebuilderDBURL string              `mapstructure:"rebuilderdb-url"`
+	AuraMQ         *AuraMQConfig       `mapstructure:"auramq"`
+	Compensation   *CompensationConfig `mapstructure:"compensation"`
+	Logger         *LogConfig          `mapstructure:"logger"`
+	MiscConfig     *MiscConfig         `mapstructure:"misc"`
 }
 
 //AuraMQConfig auramq configuration
@@ -85,6 +95,14 @@ type AuraMQConfig struct {
 	Account              string   `mapstructure:"account"`
 	PrivateKey           string   `mapstructure:"private-key"`
 	ClientID             string   `mapstructure:"client-id"`
+}
+
+//CompensationConfig compensation configuration
+type CompensationConfig struct {
+	AllSyncURLs []string `mapstructure:"all-sync-urls"`
+	BatchSize   int      `mapstructure:"batch-size"`
+	WaitTime    int      `mapstructure:"wait-time"`
+	SkipTime    int      `mapstructure:"skip-time"`
 }
 
 //LogConfig system log configuration
