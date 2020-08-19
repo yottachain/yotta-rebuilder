@@ -662,9 +662,9 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		if i == 0 {
 			continue
 		}
-		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d", len(tasks.Tasklist))
-		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
 		tasks.ExpiredTime = expiredTime
+		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d， expired time is %d", len(tasks.Tasklist), tasks.ExpiredTime)
+		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
 		return tasks, nil
 	}
 	err = errors.New("no tasks can be allocated")
