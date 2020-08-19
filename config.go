@@ -27,6 +27,15 @@ const (
 	//AuramqClientIDField Field name of auramq.client-id
 	AuramqClientIDField = "auramq.client-id"
 
+	//CompensationAllSyncURLsField Field name of compensation.all-sync-urls
+	CompensationAllSyncURLsField = "compensation.all-sync-urls"
+	//CompensationBatchSizeField Field name of compensation.batch-size
+	CompensationBatchSizeField = "compensation.batch-size"
+	//CompensationWaitTimeField Field name of compensation.wait-time
+	CompensationWaitTimeField = "compensation.wait-time"
+	//CompensationSkipTimeField Field name of compensation.skip-time
+	CompensationSkipTimeField = "compensation.skip-time"
+
 	//LoggerOutputField Field name of logger.output config
 	LoggerOutputField = "logger.output"
 	//LoggerFilePathField Field name of logger.file-path config
@@ -52,24 +61,27 @@ const (
 	MiscRebuildShardTaskBatchSizeField = "misc.rebuild-shard-task-batch-size"
 	//MiscRebuildShardMinerTaskBatchSizeField Field name of misc.rebuild-shard-miner-task-batch-size
 	MiscRebuildShardMinerTaskBatchSizeField = "misc.rebuild-shard-miner-task-batch-size"
-	//MiscExcludeAddrPrefixField Field name of misc.exclude-addr-prefix config
-	MiscExcludeAddrPrefixField = "misc.exclude-addr-prefix"
 	//MiscRetryCountField Field name of misc.retry-count config
 	MiscRetryCountField = "misc.retry-count"
 	//MiscMaxCacheSizeField Field name of misc.max-cache-size config
 	MiscMaxCacheSizeField = "misc.max-cache-size"
 	//MiscFetchTaskTimeGapField Field name of misc.fetch-task-time-gap
 	MiscFetchTaskTimeGapField = "misc.fetch-task-time-gap"
+	//MiscSyncPoolLengthField Field name of misc.sync-pool-length config
+	MiscSyncPoolLengthField = "misc.sync-pool-length"
+	//MiscSyncQueueLengthField Field name of misc.sync-queue-length config
+	MiscSyncQueueLengthField = "misc.sync-queue-length"
 )
 
 //Config system configuration
 type Config struct {
-	BindAddr       string        `mapstructure:"bind-addr"`
-	AnalysisDBURL  string        `mapstructure:"analysisdb-url"`
-	RebuilderDBURL string        `mapstructure:"rebuilderdb-url"`
-	AuraMQ         *AuraMQConfig `mapstructure:"auramq"`
-	Logger         *LogConfig    `mapstructure:"logger"`
-	MiscConfig     *MiscConfig   `mapstructure:"misc"`
+	BindAddr       string              `mapstructure:"bind-addr"`
+	AnalysisDBURL  string              `mapstructure:"analysisdb-url"`
+	RebuilderDBURL string              `mapstructure:"rebuilderdb-url"`
+	AuraMQ         *AuraMQConfig       `mapstructure:"auramq"`
+	Compensation   *CompensationConfig `mapstructure:"compensation"`
+	Logger         *LogConfig          `mapstructure:"logger"`
+	MiscConfig     *MiscConfig         `mapstructure:"misc"`
 }
 
 //AuraMQConfig auramq configuration
@@ -85,6 +97,14 @@ type AuraMQConfig struct {
 	ClientID             string   `mapstructure:"client-id"`
 }
 
+//CompensationConfig compensation configuration
+type CompensationConfig struct {
+	AllSyncURLs []string `mapstructure:"all-sync-urls"`
+	BatchSize   int      `mapstructure:"batch-size"`
+	WaitTime    int      `mapstructure:"wait-time"`
+	SkipTime    int      `mapstructure:"skip-time"`
+}
+
 //LogConfig system log configuration
 type LogConfig struct {
 	Output       string `mapstructure:"output"`
@@ -96,15 +116,16 @@ type LogConfig struct {
 
 //MiscConfig miscellaneous configuration
 type MiscConfig struct {
-	RebuildableMinerTimeGap         int    `mapstructure:"rebuildable-miner-time-gap"`
-	ProcessRebuildableMinerInterval int    `mapstructure:"process-rebuildable-miner-interval"`
-	ProcessRebuildableShardInterval int    `mapstructure:"process-rebuildable-shard-interval"`
-	ProcessReaperInterval           int    `mapstructure:"process-reaper-interval"`
-	RebuildShardExpiredTime         int    `mapstructure:"rebuild-shard-expired-time"`
-	RebuildShardTaskBatchSize       int    `mapstructure:"rebuild-shard-task-batch-size"`
-	RebuildShardMinerTaskBatchSize  int    `mapstructure:"rebuild-shard-miner-task-batch-size"`
-	ExcludeAddrPrefix               string `mapstructure:"exclude-addr-prefix"`
-	RetryCount                      int    `mapstructure:"retry-count"`
-	MaxCacheSize                    int64  `mapstructure:"max-cache-size"`
-	FetchTaskTimeGap                int32  `mapstructure:"fetch-task-time-gap"`
+	RebuildableMinerTimeGap         int   `mapstructure:"rebuildable-miner-time-gap"`
+	ProcessRebuildableMinerInterval int   `mapstructure:"process-rebuildable-miner-interval"`
+	ProcessRebuildableShardInterval int   `mapstructure:"process-rebuildable-shard-interval"`
+	ProcessReaperInterval           int   `mapstructure:"process-reaper-interval"`
+	RebuildShardExpiredTime         int   `mapstructure:"rebuild-shard-expired-time"`
+	RebuildShardTaskBatchSize       int   `mapstructure:"rebuild-shard-task-batch-size"`
+	RebuildShardMinerTaskBatchSize  int   `mapstructure:"rebuild-shard-miner-task-batch-size"`
+	RetryCount                      int   `mapstructure:"retry-count"`
+	MaxCacheSize                    int64 `mapstructure:"max-cache-size"`
+	FetchTaskTimeGap                int32 `mapstructure:"fetch-task-time-gap"`
+	SyncPoolLength                  int   `mapstructure:"sync-pool-length"`
+	SyncQueueLength                 int   `mapstructure:"sync-queue-length"`
 }

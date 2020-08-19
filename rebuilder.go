@@ -13,6 +13,7 @@ import (
 	"github.com/aurawing/auramq"
 	"github.com/aurawing/auramq/msg"
 	proto "github.com/golang/protobuf/proto"
+	"github.com/ivpusic/grpool"
 	rl "github.com/juju/ratelimit"
 	log "github.com/sirupsen/logrus"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
@@ -31,18 +32,15 @@ type Rebuilder struct {
 	rebuilderdbClient *mongo.Client
 	NodeManager       *NodeManager
 	Cache             *Cache
+	Compensation      *CompensationConfig
 	Params            *MiscConfig
 	mqClis            map[int]*ytsync.Service
 	ratelimiter       *rl.Bucket
 }
 
 //New create a new rebuilder instance
-func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, conf *MiscConfig) (*Rebuilder, error) {
+func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
 	entry := log.WithFields(log.Fields{Function: "New"})
-	// entry.Debugf("analysis DB URL: %s", analysisDBURL)
-	// entry.Debugf("rebuilder DB URL: %s", rebuilderDBURL)
-	// entry.Debugf("MQ config: %+v", mqconf)
-	// entry.Debugf("Misc config: %+v", conf)
 	analysisdbClient, err := mongo.Connect(context.Background(), options.Client().ApplyURI(analysisDBURL))
 	if err != nil {
 		entry.WithError(err).Errorf("creating analysisDB client failed: %s", analysisDBURL)
@@ -63,18 +61,21 @@ func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, conf *MiscC
 	entry.Info("node manager created")
 	cache := NewCache(uint64(conf.MaxCacheSize))
 	entry.Info("cache created")
+	pool := grpool.NewPool(conf.SyncPoolLength, conf.SyncQueueLength)
 	callback := func(msg *msg.Message) {
 		if msg.GetType() == auramq.BROADCAST {
 			if msg.GetDestination() == mqconf.MinerSyncTopic {
-				nodemsg := new(pb.NodeMsg)
-				err := proto.Unmarshal(msg.Content, nodemsg)
-				if err != nil {
-					entry.WithError(err).Error("decoding nodeMsg failed")
-					return
+				pool.JobQueue <- func() {
+					nodemsg := new(pb.NodeMsg)
+					err := proto.Unmarshal(msg.Content, nodemsg)
+					if err != nil {
+						entry.WithError(err).Error("decoding nodeMsg failed")
+						return
+					}
+					node := new(Node)
+					node.Fillby(nodemsg)
+					syncNode(rebuilderdbClient, nodeMgr, node)
 				}
-				node := new(Node)
-				node.Fillby(nodemsg)
-				syncNode(rebuilderdbClient, nodeMgr, node, conf.ExcludeAddrPrefix)
 			}
 		}
 	}
@@ -84,16 +85,15 @@ func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, conf *MiscC
 		return nil, err
 	}
 	ratelimiter := rl.NewBucket(time.Millisecond*time.Duration(conf.FetchTaskTimeGap), 2)
-	rebuilder := &Rebuilder{analysisdbClient: analysisdbClient, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Params: conf, mqClis: m, ratelimiter: ratelimiter}
+	rebuilder := &Rebuilder{analysisdbClient: analysisdbClient, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Compensation: cpsConf, Params: conf, mqClis: m, ratelimiter: ratelimiter}
 	return rebuilder, nil
 }
 
-func syncNode(cli *mongo.Client, nodeMgr *NodeManager, node *Node, excludeAddrPrefix string) error {
+func syncNode(cli *mongo.Client, nodeMgr *NodeManager, node *Node) error {
 	entry := log.WithFields(log.Fields{Function: "syncNode"})
 	if node.ID == 0 {
 		return errors.New("node ID cannot be 0")
 	}
-	node.Addrs = checkPublicAddrs(node.Addrs, excludeAddrPrefix)
 	collection := cli.Database(RebuilderDB).Collection(NodeTab)
 	otherDoc := bson.A{}
 	if node.Ext != "" && node.Ext[0] == '[' && node.Ext[len(node.Ext)-1] == ']' {
@@ -161,42 +161,6 @@ func syncNode(cli *mongo.Client, nodeMgr *NodeManager, node *Node, excludeAddrPr
 	return nil
 }
 
-func checkPublicAddrs(addrs []string, excludeAddrPrefix string) []string {
-	filteredAddrs := []string{}
-	for _, addr := range addrs {
-		if strings.HasPrefix(addr, "/ip4/127.") ||
-			strings.HasPrefix(addr, "/ip4/192.168.") ||
-			strings.HasPrefix(addr, "/ip4/169.254.") ||
-			strings.HasPrefix(addr, "/ip4/10.") ||
-			strings.HasPrefix(addr, "/ip4/172.16.") ||
-			strings.HasPrefix(addr, "/ip4/172.17.") ||
-			strings.HasPrefix(addr, "/ip4/172.18.") ||
-			strings.HasPrefix(addr, "/ip4/172.19.") ||
-			strings.HasPrefix(addr, "/ip4/172.20.") ||
-			strings.HasPrefix(addr, "/ip4/172.21.") ||
-			strings.HasPrefix(addr, "/ip4/172.22.") ||
-			strings.HasPrefix(addr, "/ip4/172.23.") ||
-			strings.HasPrefix(addr, "/ip4/172.24.") ||
-			strings.HasPrefix(addr, "/ip4/172.25.") ||
-			strings.HasPrefix(addr, "/ip4/172.26.") ||
-			strings.HasPrefix(addr, "/ip4/172.27.") ||
-			strings.HasPrefix(addr, "/ip4/172.28.") ||
-			strings.HasPrefix(addr, "/ip4/172.29.") ||
-			strings.HasPrefix(addr, "/ip4/172.30.") ||
-			strings.HasPrefix(addr, "/ip4/172.31.") ||
-			strings.HasPrefix(addr, "/ip6/") ||
-			strings.HasPrefix(addr, "/p2p-circuit/") {
-			if excludeAddrPrefix != "" && strings.HasPrefix(addr, excludeAddrPrefix) {
-				filteredAddrs = append(filteredAddrs, addr)
-			}
-			continue
-		} else {
-			filteredAddrs = append(filteredAddrs, addr)
-		}
-	}
-	return dedup(filteredAddrs)
-}
-
 func dedup(urls []string) []string {
 	if urls == nil || len(urls) == 0 {
 		return nil
@@ -215,6 +179,69 @@ func dedup(urls []string) []string {
 
 //Start starting rebuilding process
 func (rebuilder *Rebuilder) Start() {
+	entry := log.WithFields(log.Fields{Function: "Start"})
+	rebuilder.Preprocess()
+	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
+	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
+	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
+	curShard, err := collectionRS.Find(context.Background(), bson.M{"timestamp": bson.M{"$lt": Int64Max}})
+	if err != nil {
+		entry.WithError(err).Error("pre-fetching rebuildable shards failed")
+	} else {
+		for curShard.Next(context.Background()) {
+			rshard := new(RebuildShard)
+			err := curShard.Decode(rshard)
+			if err != nil {
+				entry.WithError(err).Error("decoding rebuildable shard failed")
+				continue
+			}
+
+			drop := false
+			if !rebuilder.Cache.IsFull() {
+				opts := options.FindOptions{}
+				opts.Sort = bson.M{"_id": 1}
+				scur, err := collectionAS.Find(context.Background(), bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+				if err != nil {
+					entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+				} else {
+					//遍历分块内全部分片
+					hashs := make([][]byte, 0)
+					nodeIDs := make([]int32, 0)
+					i := rshard.BlockID
+					for scur.Next(context.Background()) {
+						s := new(Shard)
+						err := scur.Decode(s)
+						if err != nil {
+							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("decoding sibling shard %d failed", i)
+							drop = true
+							break
+						}
+						entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).Tracef("decode sibling shard info %d", i)
+						if s.ID != i {
+							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("sibling shard %d not found: %d", i, s.ID)
+							drop = true
+							break
+						}
+						hashs = append(hashs, s.VHF.Data)
+						nodeIDs = append(nodeIDs, s.NodeID)
+						i++
+					}
+					scur.Close(context.Background())
+					if len(hashs) == int(rshard.VNF) {
+						rebuilder.Cache.Put(rshard.ID, hashs, nodeIDs)
+					}
+				}
+			}
+			if drop {
+				entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).Warn("rebuilding task create failed: sibling shards lost")
+				collectionRU.InsertOne(context.Background(), rshard)
+				collectionRS.UpdateOne(context.Background(), bson.M{"_id": rshard.ID}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+			}
+		}
+		curShard.Close(context.Background())
+	}
+
+	go rebuilder.Compensate()
 	go rebuilder.processRebuildableMiner()
 	go rebuilder.processRebuildableShard()
 	go rebuilder.reaper()
@@ -223,6 +250,7 @@ func (rebuilder *Rebuilder) Start() {
 func (rebuilder *Rebuilder) processRebuildableMiner() {
 	entry := log.WithFields(log.Fields{Function: "processRebuildableMiner"})
 	collection := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
+	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	entry.Info("starting rebuildable node processor")
 	for {
@@ -239,8 +267,37 @@ func (rebuilder *Rebuilder) processRebuildableMiner() {
 				entry.WithError(err).Warn("decoding node")
 				continue
 			}
+
+			rangeFrom := int64(0)
+			rangeTo := int64(0)
+			shardFrom := new(Shard)
+			opts := options.FindOneOptions{}
+			opts.Sort = bson.M{"_id": 1}
+			err = collectionAS.FindOne(context.Background(), bson.M{"nodeId": node.ID}, &opts).Decode(shardFrom)
+			if err != nil {
+				if err != mongo.ErrNoDocuments {
+					entry.WithError(err).Warnf("finding starting shard of miner %d", node.ID)
+					continue
+				}
+			} else {
+				rangeFrom = shardFrom.ID
+			}
+			shardTo := new(Shard)
+			opts.Sort = bson.M{"_id": -1}
+			err = collectionAS.FindOne(context.Background(), bson.M{"nodeId": node.ID}, &opts).Decode(shardTo)
+			if err != nil {
+				if err != mongo.ErrNoDocuments {
+					entry.WithError(err).Warnf("finding ending shard of miner %d", node.ID)
+					continue
+				}
+			} else {
+				rangeTo = shardTo.ID
+			}
+
 			miner := new(RebuildMiner)
 			miner.ID = node.ID
+			miner.RangeFrom = rangeFrom
+			miner.RangeTo = rangeTo
 			miner.Status = node.Status
 			miner.Timestamp = time.Now().Unix()
 			_, err = collectionRM.InsertOne(context.Background(), miner)
@@ -366,7 +423,7 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 
 				if drop {
 					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Warn("rebuilding task create failed: sibling shards lost")
-					collectionRU.InsertOne(context.Background(), shard)
+					collectionRU.InsertOne(context.Background(), rshard)
 				} else {
 					shards = append(shards, *rshard)
 				}
@@ -480,6 +537,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		entry.WithField(MinerID, miner.ID).Debug("decode miner info")
 		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>2. Decode miner: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 		startTime = time.Now().UnixNano()
+		expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
 		//查找属于当前矿机的未重建或重建超时分片
 		cur2, err := collectionRS.Find(context.Background(), bson.M{"minerID": miner.ID, "timestamp": bson.M{"$lt": time.Now().UnixNano() - int64(rebuilder.Params.RebuildShardExpiredTime*1000000000)}})
 		if err != nil {
@@ -604,9 +662,9 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		if i == 0 {
 			continue
 		}
-		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d", len(tasks.Tasklist))
+		tasks.ExpiredTime = expiredTime
+		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d， expired time is %d", len(tasks.Tasklist), tasks.ExpiredTime)
 		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
-
 		return tasks, nil
 	}
 	err = errors.New("no tasks can be allocated")
@@ -617,6 +675,9 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 //UpdateTaskStatus update task status
 func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) error {
 	nodeID := result.NodeID
+	if time.Now().Unix() > result.ExpiredTime {
+		return errors.New("tasks expired")
+	}
 	startTime := time.Now().UnixNano()
 	entry := log.WithFields(log.Fields{Function: "UpdateTaskStatus"})
 	entry.WithField(MinerID, nodeID).Infof("received rebuilding status: %d results", len(result.Id))

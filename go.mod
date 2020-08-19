@@ -6,6 +6,7 @@ require (
 	github.com/aurawing/auramq v0.0.2-0.20200521072017-845ffa488ac8
 	github.com/fastly/go-utils v0.0.0-20180712184237-d95a45783239 // indirect
 	github.com/golang/protobuf v1.4.1
+	github.com/ivpusic/grpool v1.0.0
 	github.com/jehiah/go-strftime v0.0.0-20171201141054-1d33003b3869 // indirect
 	github.com/juju/ratelimit v1.0.1
 	github.com/lestrrat-go/file-rotatelogs v2.3.0+incompatible

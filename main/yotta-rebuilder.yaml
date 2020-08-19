@@ -16,6 +16,16 @@ auramq:
   account: "yottanalysis"
   private-key: "5JU7Q3PBEV3ZBHKU5bbVibGxuPzYnwb5HXCGgTedtuhCsDc52j7"
   client-id: "yottarebuilder"
+compensation:
+  all-sync-urls:
+  - "http://127.0.0.1:8091"
+  - "http://127.0.0.1:8092"
+  - "http://127.0.0.1:8093"
+  - "http://127.0.0.1:8094"
+  - "http://127.0.0.1:8095"
+  batch-size: 1000
+  wait-time: 10
+  skip-time: 180
 logger:
   output: "file"
   file-path: "./rebuilder.log"
@@ -30,7 +40,8 @@ misc:
   rebuild-shard-expired-time: 1200
   rebuild-shard-task-batch-size: 10000
   rebuild-shard-miner-task-batch-size: 1000
-  exclude-addr-prefix: "/ip4/172.17"
   retry-count: 3
   max-cache-size: 100000
   fetch-task-time-gap: 500
+  sync-pool-length: 5000
+  sync-queue-length: 10000
