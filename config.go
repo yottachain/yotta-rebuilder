@@ -49,6 +49,8 @@ const (
 
 	//MiscRebuildableMinerTimeGapField Field name of misc.rebuildable-miner-time-gap config
 	MiscRebuildableMinerTimeGapField = "misc.rebuildable-miner-time-gap"
+	//MiscRebuildingMinerCountPerBatchField Field name of misc.rebuilding-miner-count-per-batch
+	MiscRebuildingMinerCountPerBatchField = "misc.rebuilding-miner-count-per-batch"
 	//MiscProcessRebuildableMinerIntervalField Field name of misc.process-rebuildable-miner-interval config
 	MiscProcessRebuildableMinerIntervalField = "misc.process-rebuildable-miner-interval"
 	//MiscProcessRebuildableShardIntervalField Field name of misc.process-rebuildable-shard-interval config
@@ -117,6 +119,7 @@ type LogConfig struct {
 //MiscConfig miscellaneous configuration
 type MiscConfig struct {
 	RebuildableMinerTimeGap         int   `mapstructure:"rebuildable-miner-time-gap"`
+	RebuildingMinerCountPerBatch    int   `mapstructure:"rebuilding-miner-count-per-batch"`
 	ProcessRebuildableMinerInterval int   `mapstructure:"process-rebuildable-miner-interval"`
 	ProcessRebuildableShardInterval int   `mapstructure:"process-rebuildable-shard-interval"`
 	ProcessReaperInterval           int   `mapstructure:"process-reaper-interval"`

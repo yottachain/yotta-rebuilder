@@ -34,6 +34,7 @@ logger:
   level: "Debug"
 misc:
   rebuildable-miner-time-gap: 14400
+  rebuilding-miner-count-per-batch: 10
   process-rebuildable-miner-interval: 10
   process-rebuildable-shard-interval: 10
   process-reaper-interval: 60

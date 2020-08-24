@@ -65,11 +65,11 @@ func GetRebuildShards(url string, from int64, count int, skipTime int64) (*Shard
 	}
 	response = response[0:i]
 	next := int64(0)
+	entry.Debugf("fetched %d shards rebuilt", len(response))
 	if len(response) == count {
 		next = response[count-1].ID
 		return &ShardsRebuild{ShardsRebuild: response[0 : count-1], More: true, Next: next}, nil
 	}
-	entry.Debugf("fetched %d shards rebuilt", len(response))
 	return &ShardsRebuild{ShardsRebuild: response, More: false, Next: 0}, nil
 }
 
