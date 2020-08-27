@@ -261,8 +261,17 @@ func (rebuilder *Rebuilder) processRebuildableMiner() {
 			continue
 		}
 		for cur.Next(context.Background()) {
+			cnt, err := collectionRM.CountDocuments(context.Background(), bson.M{"status": bson.M{"$lt": 3}})
+			if err != nil {
+				entry.WithError(err).Error("cannot calculate count of rebuilding nodes")
+				break
+			}
+			if cnt >= int64(rebuilder.Params.RebuildingMinerCountPerBatch) {
+				entry.Debugf("reaching max count of rebuilding miners")
+				break
+			}
 			node := new(Node)
-			err := cur.Decode(node)
+			err = cur.Decode(node)
 			if err != nil {
 				entry.WithError(err).Warn("decoding node")
 				continue

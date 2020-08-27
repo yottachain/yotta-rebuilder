@@ -194,6 +194,8 @@ var (
 
 	//DefaultMiscRebuildableMinerTimeGap default value of MiscRebuildableMinerTimeGap
 	DefaultMiscRebuildableMinerTimeGap int = 14400
+	//DefaultMiscRebuildingMinerCountPerBatch default value of MiscRebuildingMinerCountPerBatch
+	DefaultMiscRebuildingMinerCountPerBatch int = 10
 	//DefaultMiscProcessRebuildableMinerInterval default value of MiscProcessRebuildableMinerInterval
 	DefaultMiscProcessRebuildableMinerInterval int = 10
 	//DefaultMiscProcessRebuildableShardInterval default value of MiscProcessRebuildableShardInterval
@@ -268,6 +270,8 @@ func initFlag() {
 	//Misc config
 	rootCmd.PersistentFlags().Int(ytrebuilder.MiscRebuildableMinerTimeGapField, DefaultMiscRebuildableMinerTimeGap, "time gap between miner becoming rebuildable and starting rebuilding")
 	viper.BindPFlag(ytrebuilder.MiscRebuildableMinerTimeGapField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscRebuildableMinerTimeGapField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MiscRebuildingMinerCountPerBatchField, DefaultMiscRebuildingMinerCountPerBatch, "count of rebuilding miners per batch")
+	viper.BindPFlag(ytrebuilder.MiscRebuildingMinerCountPerBatchField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscRebuildingMinerCountPerBatchField))
 	rootCmd.PersistentFlags().Int(ytrebuilder.MiscProcessRebuildableMinerIntervalField, DefaultMiscProcessRebuildableMinerInterval, "time interval of rebuildable miner fetching process")
 	viper.BindPFlag(ytrebuilder.MiscProcessRebuildableMinerIntervalField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscProcessRebuildableMinerIntervalField))
 	rootCmd.PersistentFlags().Int(ytrebuilder.MiscProcessRebuildableShardIntervalField, DefaultMiscProcessRebuildableShardInterval, "time interval of rebuildable shard fetching process")
