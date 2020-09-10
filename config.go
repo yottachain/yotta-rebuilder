@@ -73,6 +73,8 @@ const (
 	MiscSyncPoolLengthField = "misc.sync-pool-length"
 	//MiscSyncQueueLengthField Field name of misc.sync-queue-length config
 	MiscSyncQueueLengthField = "misc.sync-queue-length"
+	//MiscWeightThresholdField Field name of misc.weight-threshold
+	MiscWeightThresholdField = "misc.weight-threshold"
 )
 
 //Config system configuration
@@ -131,4 +133,5 @@ type MiscConfig struct {
 	FetchTaskTimeGap                int32 `mapstructure:"fetch-task-time-gap"`
 	SyncPoolLength                  int   `mapstructure:"sync-pool-length"`
 	SyncQueueLength                 int   `mapstructure:"sync-queue-length"`
+	WeightThreshold                 int   `mapstructure:"weight-threshold"`
 }

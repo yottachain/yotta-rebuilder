@@ -218,6 +218,8 @@ var (
 	DefaultMiscSyncPoolLength int = 5000
 	//DefaultMiscSyncQueueLength default value of MiscSyncQueueLength
 	DefaultMiscSyncQueueLength int = 10000
+	//DefaultMiscWeightThreshold default value of MiscWeightThreshold
+	DefaultMiscWeightThreshold int = 10
 )
 
 func initFlag() {
@@ -294,4 +296,6 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.MiscSyncPoolLengthField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscSyncPoolLengthField))
 	rootCmd.PersistentFlags().Int(ytrebuilder.MiscSyncQueueLengthField, DefaultMiscSyncQueueLength, "Length of node synchronization task queue, in which idle tasks are waiting for scheduling")
 	viper.BindPFlag(ytrebuilder.MiscSyncQueueLengthField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscSyncQueueLengthField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MiscWeightThresholdField, DefaultMiscWeightThreshold, "Weight threshold of miner bigger than which can execute rebuild task")
+	viper.BindPFlag(ytrebuilder.MiscWeightThresholdField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscWeightThresholdField))
 }

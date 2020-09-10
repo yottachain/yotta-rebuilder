@@ -522,7 +522,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 	entry.Debugf("<time trace %d>1. Get rebuilder node: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 	startTime = time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
-	if rbNode.Rebuilding > 0 || rbNode.Status > 1 || rbNode.Weight == 0 {
+	if rbNode.Rebuilding > 0 || rbNode.Status > 1 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) {
 		err := fmt.Errorf("no tasks can be allocated to miner %d", id)
 		entry.WithError(err).Errorf("status of rebuilder miner is %d, weight is %f, rebuilding is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding)
 		return nil, err
