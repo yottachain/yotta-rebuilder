@@ -1,10 +1,13 @@
 package ytrebuilder
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,10 +18,10 @@ import (
 
 //ShardRebuildMeta metadata of shards rebuilt
 type ShardRebuildMeta struct {
-	ID          int64 `json:"ID"`
+	ID          int64 `json:"_id"`
 	VFI         int64 `json:"VFI"`
-	DestMinerID int32 `json:"NewNodeId"`
-	SrcMinerID  int32 `json:"OldNodeId"`
+	DestMinerID int32 `json:"nid"`
+	SrcMinerID  int32 `json:"sid"`
 }
 
 //ShardsRebuild struct
@@ -36,19 +39,36 @@ type CPSRecord struct {
 }
 
 //GetRebuildShards find rebuilt shards
-func GetRebuildShards(url string, from int64, count int, skipTime int64) (*ShardsRebuild, error) {
+func GetRebuildShards(httpCli *http.Client, url string, from int64, count int, skipTime int64) (*ShardsRebuild, error) {
 	entry := log.WithFields(log.Fields{Function: "GetRebuildShards"})
 	count++
-	fullURL := fmt.Sprintf("%s/sync/getShardRebuidMetas?start=%d&count=%d", url, from, count)
+	fullURL := fmt.Sprintf("%s/sync/getShardRebuildMetas?start=%d&count=%d", url, from, count)
 	entry.Debugf("fetching rebuilt shards by URL: %s", fullURL)
-	resp, err := http.Get(fullURL)
+
+	request, err := http.NewRequest("GET", fullURL, nil)
+	if err != nil {
+		entry.WithError(err).Errorf("create request failed: %s", fullURL)
+		return nil, err
+	}
+	request.Header.Add("Accept-Encoding", "gzip")
+	resp, err := httpCli.Do(request)
 	if err != nil {
 		entry.WithError(err).Errorf("get rebuilt shards meta failed: %s", fullURL)
 		return nil, err
 	}
 	defer resp.Body.Close()
+	reader := io.Reader(resp.Body)
+	if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
+		gbuf, err := gzip.NewReader(reader)
+		if err != nil {
+			entry.WithError(err).Errorf("decompress response body: %s", fullURL)
+			return nil, err
+		}
+		reader = io.Reader(gbuf)
+		defer gbuf.Close()
+	}
 	response := make([]*ShardRebuildMeta, 0)
-	err = json.NewDecoder(resp.Body).Decode(&response)
+	err = json.NewDecoder(reader).Decode(&response)
 	if err != nil {
 		entry.WithError(err).Errorf("decode rebuilt shards metadata failed: %s", fullURL)
 		return nil, err
@@ -104,7 +124,7 @@ func (rebuilder *Rebuilder) Preprocess() {
 						continue
 					}
 				}
-				shardsRebuilt, err := GetRebuildShards(rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
+				shardsRebuilt, err := GetRebuildShards(rebuilder.httpCli, rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
 				if err != nil {
 					time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
 					continue
@@ -122,7 +142,7 @@ func (rebuilder *Rebuilder) Preprocess() {
 					break
 				}
 			}
-			entry.Infof("finished propress SN%d", snID)
+			entry.Infof("finished pre-process SN%d", snID)
 			wg.Done()
 		}()
 	}
@@ -158,7 +178,7 @@ func (rebuilder *Rebuilder) Compensate() {
 						continue
 					}
 				}
-				shardsRebuilt, err := GetRebuildShards(rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
+				shardsRebuilt, err := GetRebuildShards(rebuilder.httpCli, rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
 				if err != nil {
 					time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
 					continue

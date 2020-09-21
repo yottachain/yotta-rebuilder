@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -19,7 +20,7 @@ func main1() {
 	start := int64(0)
 	i := 0
 	for {
-		shardsRebuilt, err := ytrebuilder.GetRebuildShards("http://192.168.36.132:8091", start, 100, time.Now().Unix()-int64(180))
+		shardsRebuilt, err := ytrebuilder.GetRebuildShards(new(http.Client), "http://192.168.36.132:8091", start, 100, time.Now().Unix()-int64(180))
 		if err != nil {
 			time.Sleep(time.Duration(10) * time.Second)
 			continue

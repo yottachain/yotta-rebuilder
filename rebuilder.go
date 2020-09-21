@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ type Rebuilder struct {
 	Params            *MiscConfig
 	mqClis            map[int]*ytsync.Service
 	ratelimiter       *rl.Bucket
+	httpCli           *http.Client
 }
 
 //New create a new rebuilder instance
@@ -85,7 +87,7 @@ func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *Co
 		return nil, err
 	}
 	ratelimiter := rl.NewBucket(time.Millisecond*time.Duration(conf.FetchTaskTimeGap), 2)
-	rebuilder := &Rebuilder{analysisdbClient: analysisdbClient, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Compensation: cpsConf, Params: conf, mqClis: m, ratelimiter: ratelimiter}
+	rebuilder := &Rebuilder{analysisdbClient: analysisdbClient, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Compensation: cpsConf, Params: conf, mqClis: m, ratelimiter: ratelimiter, httpCli: &http.Client{}}
 	return rebuilder, nil
 }
 
@@ -138,7 +140,7 @@ func syncNode(cli *mongo.Client, nodeMgr *NodeManager, node *Node) error {
 			return err
 		}
 		nodeMgr.UpdateNode(updatedNode)
-		if updatedNode.Status == 3 {
+		if updatedNode.Status == 3 && oldNode.Status == 2 {
 			//重建完毕，状态改为3，删除旧任务
 			collectionRM := cli.Database(RebuilderDB).Collection(RebuildMinerTab)
 			collectionRS := cli.Database(RebuilderDB).Collection(RebuildShardTab)
