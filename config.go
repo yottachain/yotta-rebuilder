@@ -75,6 +75,10 @@ const (
 	MiscSyncQueueLengthField = "misc.sync-queue-length"
 	//MiscWeightThresholdField Field name of misc.weight-threshold
 	MiscWeightThresholdField = "misc.weight-threshold"
+	//MiscMaxConcurrentTaskBuilderSizeField Field name of misc.max-concurrent-task-builder-size
+	MiscMaxConcurrentTaskBuilderSizeField = "misc.max-concurrent-task-builder-size"
+	//MiscMinerVersionThresholdField Field name of misc.miner-version-threshold
+	MiscMinerVersionThresholdField = "misc.miner-version-threshold"
 )
 
 //Config system configuration
@@ -134,4 +138,6 @@ type MiscConfig struct {
 	SyncPoolLength                  int   `mapstructure:"sync-pool-length"`
 	SyncQueueLength                 int   `mapstructure:"sync-queue-length"`
 	WeightThreshold                 int   `mapstructure:"weight-threshold"`
+	MaxConcurrentTaskBuilderSize    int   `mapstructure:"max-concurrent-task-builder-size"`
+	MinerVersionThreshold           int   `mapstructure:"miner-version-threshold"`
 }

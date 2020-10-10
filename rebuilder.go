@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurawing/auramq"
@@ -190,6 +191,10 @@ func (rebuilder *Rebuilder) Start() {
 	if err != nil {
 		entry.WithError(err).Error("pre-fetching rebuildable shards failed")
 	} else {
+		entry.Debugf("ready for filling cache")
+		idx := 0
+		wg := sync.WaitGroup{}
+		wg.Add(rebuilder.Params.MaxConcurrentTaskBuilderSize)
 		for curShard.Next(context.Background()) {
 			rshard := new(RebuildShard)
 			err := curShard.Decode(rshard)
@@ -198,49 +203,66 @@ func (rebuilder *Rebuilder) Start() {
 				continue
 			}
 
-			drop := false
-			if !rebuilder.Cache.IsFull() {
-				opts := options.FindOptions{}
-				opts.Sort = bson.M{"_id": 1}
-				scur, err := collectionAS.Find(context.Background(), bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
-				if err != nil {
-					entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
-				} else {
-					//遍历分块内全部分片
-					hashs := make([][]byte, 0)
-					nodeIDs := make([]int32, 0)
-					i := rshard.BlockID
-					for scur.Next(context.Background()) {
-						s := new(Shard)
-						err := scur.Decode(s)
-						if err != nil {
-							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("decoding sibling shard %d failed", i)
-							drop = true
-							break
+			idx++
+			go func() {
+				defer wg.Done()
+				drop := false
+				if !rebuilder.Cache.IsFull() {
+					opts := options.FindOptions{}
+					opts.Sort = bson.M{"_id": 1}
+					scur, err := collectionAS.Find(context.Background(), bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+					if err != nil {
+						entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+					} else {
+						//遍历分块内全部分片
+						hashs := make([][]byte, 0)
+						nodeIDs := make([]int32, 0)
+						i := rshard.BlockID
+						for scur.Next(context.Background()) {
+							s := new(Shard)
+							err := scur.Decode(s)
+							if err != nil {
+								entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("decoding sibling shard %d failed", i)
+								drop = true
+								break
+							}
+							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).Tracef("decode sibling shard info %d", i)
+							if s.ID != i {
+								entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("sibling shard %d not found: %d", i, s.ID)
+								drop = true
+								break
+							}
+							hashs = append(hashs, s.VHF.Data)
+							nodeIDs = append(nodeIDs, s.NodeID)
+							i++
 						}
-						entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).Tracef("decode sibling shard info %d", i)
-						if s.ID != i {
-							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("sibling shard %d not found: %d", i, s.ID)
-							drop = true
-							break
+						scur.Close(context.Background())
+						if len(hashs) == int(rshard.VNF) {
+							rebuilder.Cache.Put(rshard.ID, hashs, nodeIDs)
 						}
-						hashs = append(hashs, s.VHF.Data)
-						nodeIDs = append(nodeIDs, s.NodeID)
-						i++
-					}
-					scur.Close(context.Background())
-					if len(hashs) == int(rshard.VNF) {
-						rebuilder.Cache.Put(rshard.ID, hashs, nodeIDs)
 					}
 				}
-			}
-			if drop {
-				entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).Warn("rebuilding task create failed: sibling shards lost")
-				collectionRU.InsertOne(context.Background(), rshard)
-				collectionRS.UpdateOne(context.Background(), bson.M{"_id": rshard.ID}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+				if drop {
+					entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).Warn("rebuilding task create failed: sibling shards lost")
+					collectionRU.InsertOne(context.Background(), rshard)
+					collectionRS.UpdateOne(context.Background(), bson.M{"_id": rshard.ID}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+				}
+			}()
+			if idx%rebuilder.Params.MaxConcurrentTaskBuilderSize == 0 {
+				wg.Wait()
+				wg = sync.WaitGroup{}
+				wg.Add(rebuilder.Params.MaxConcurrentTaskBuilderSize)
+				idx = 0
 			}
 		}
+		for j := 0; j < rebuilder.Params.MaxConcurrentTaskBuilderSize-idx; j++ {
+			wg.Done()
+		}
+		if idx != 0 {
+			wg.Wait()
+		}
 		curShard.Close(context.Background())
+		entry.Debugf("cache filling finished")
 	}
 
 	go rebuilder.Compensate()
@@ -365,6 +387,10 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 				continue
 			}
 			shards := make([]interface{}, 0)
+			var lock sync.Mutex
+			idx := 0
+			wg := sync.WaitGroup{}
+			wg.Add(rebuilder.Params.MaxConcurrentTaskBuilderSize)
 			for curShard.Next(context.Background()) {
 				shard := new(Shard)
 				err := curShard.Decode(shard)
@@ -395,49 +421,66 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 					rshard.Type = 0x68b3
 					rshard.ParityShardCount = block.VNF - block.AR
 				}
-
-				drop := false
-				if !rebuilder.Cache.IsFull() {
-					opts := options.FindOptions{}
-					opts.Sort = bson.M{"_id": 1}
-					scur, err := collectionAS.Find(context.Background(), bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
-					if err != nil {
-						entry.WithField(MinerID, miner.ID).WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
-					} else {
-						//遍历分块内全部分片
-						hashs := make([][]byte, 0)
-						nodeIDs := make([]int32, 0)
-						i := rshard.BlockID
-						for scur.Next(context.Background()) {
-							s := new(Shard)
-							err := scur.Decode(s)
-							if err != nil {
-								entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("decoding sibling shard %d", i)
-								drop = true
-								break
+				idx++
+				go func() {
+					defer wg.Done()
+					drop := false
+					if !rebuilder.Cache.IsFull() {
+						opts := options.FindOptions{}
+						opts.Sort = bson.M{"_id": 1}
+						scur, err := collectionAS.Find(context.Background(), bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+						if err != nil {
+							entry.WithField(MinerID, miner.ID).WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+						} else {
+							//遍历分块内全部分片
+							hashs := make([][]byte, 0)
+							nodeIDs := make([]int32, 0)
+							i := rshard.BlockID
+							for scur.Next(context.Background()) {
+								s := new(Shard)
+								err := scur.Decode(s)
+								if err != nil {
+									entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("decoding sibling shard %d", i)
+									drop = true
+									break
+								}
+								entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
+								if s.ID != i {
+									entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("sibling shard %d not found: %d", i, s.ID)
+									drop = true
+									break
+								}
+								hashs = append(hashs, s.VHF.Data)
+								nodeIDs = append(nodeIDs, s.NodeID)
+								i++
 							}
-							entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
-							if s.ID != i {
-								entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("sibling shard %d not found: %d", i, s.ID)
-								drop = true
-								break
+							if len(hashs) == int(rshard.VNF) {
+								rebuilder.Cache.Put(rshard.ID, hashs, nodeIDs)
 							}
-							hashs = append(hashs, s.VHF.Data)
-							nodeIDs = append(nodeIDs, s.NodeID)
-							i++
-						}
-						if len(hashs) == int(rshard.VNF) {
-							rebuilder.Cache.Put(rshard.ID, hashs, nodeIDs)
 						}
 					}
-				}
 
-				if drop {
-					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Warn("rebuilding task create failed: sibling shards lost")
-					collectionRU.InsertOne(context.Background(), rshard)
-				} else {
-					shards = append(shards, *rshard)
+					if drop {
+						entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Warn("rebuilding task create failed: sibling shards lost")
+						collectionRU.InsertOne(context.Background(), rshard)
+					} else {
+						lock.Lock()
+						shards = append(shards, *rshard)
+						lock.Unlock()
+					}
+				}()
+				if idx%rebuilder.Params.MaxConcurrentTaskBuilderSize == 0 {
+					wg.Wait()
+					wg = sync.WaitGroup{}
+					wg.Add(rebuilder.Params.MaxConcurrentTaskBuilderSize)
+					idx = 0
 				}
+			}
+			for j := 0; j < rebuilder.Params.MaxConcurrentTaskBuilderSize-idx; j++ {
+				wg.Done()
+			}
+			if idx != 0 {
+				wg.Wait()
 			}
 			curShard.Close(context.Background())
 			if len(shards) == 0 {
@@ -524,9 +567,9 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 	entry.Debugf("<time trace %d>1. Get rebuilder node: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 	startTime = time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
-	if rbNode.Rebuilding > 0 || rbNode.Status > 1 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) {
+	if rbNode.Rebuilding > 0 || rbNode.Status > 1 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		err := fmt.Errorf("no tasks can be allocated to miner %d", id)
-		entry.WithError(err).Errorf("status of rebuilder miner is %d, weight is %f, rebuilding is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding)
+		entry.WithError(err).Errorf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
 		return nil, err
 	}
 	//在待重建矿机表中查找状态为2的矿机
