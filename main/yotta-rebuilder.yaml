@@ -47,3 +47,5 @@ misc:
   sync-pool-length: 5000
   sync-queue-length: 10000
   weight-threshold: 10
+  max-concurrent-task-builder-size: 200
+  miner-version-threshold: 100

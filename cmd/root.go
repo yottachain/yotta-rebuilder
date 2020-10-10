@@ -220,6 +220,10 @@ var (
 	DefaultMiscSyncQueueLength int = 10000
 	//DefaultMiscWeightThreshold default value of MiscWeightThreshold
 	DefaultMiscWeightThreshold int = 10
+	//DefaultMiscMaxConcurrentTaskBuilderSize default value of MiscMaxConcurrentTaskBuilderSize
+	DefaultMiscMaxConcurrentTaskBuilderSize int = 100
+	//DefaultMiscMinerVersionThreshold default value of MiscMinerVersionThreshold
+	DefaultMiscMinerVersionThreshold int = 0
 )
 
 func initFlag() {
@@ -298,4 +302,8 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.MiscSyncQueueLengthField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscSyncQueueLengthField))
 	rootCmd.PersistentFlags().Int(ytrebuilder.MiscWeightThresholdField, DefaultMiscWeightThreshold, "Weight threshold of miner bigger than which can execute rebuild task")
 	viper.BindPFlag(ytrebuilder.MiscWeightThresholdField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscWeightThresholdField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MiscMaxConcurrentTaskBuilderSizeField, DefaultMiscMaxConcurrentTaskBuilderSize, "Max count of concurrent goroutines when building rebuild tasks")
+	viper.BindPFlag(ytrebuilder.MiscMaxConcurrentTaskBuilderSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscMaxConcurrentTaskBuilderSizeField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MiscMinerVersionThresholdField, DefaultMiscMinerVersionThreshold, "miner that version greater than which can be allocated")
+	viper.BindPFlag(ytrebuilder.MiscMinerVersionThresholdField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscMinerVersionThresholdField))
 }
