@@ -605,7 +605,12 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		}
 		i := 0
 		tasks := new(pb.MultiTaskDescription)
+		beginTime := time.Now().UnixNano()
 		for cur2.Next(context.Background()) {
+			if time.Now().UnixNano()-beginTime > 2000000000 {
+				entry.WithField(MinerID, miner.ID).Debug("time expired of creating rebuild tasks")
+				return nil, errors.New("time expired of creating rebuild tasks")
+			}
 			//达到单台矿机最大可分配分片数则停止分配
 			if i == rebuilder.Params.RebuildShardMinerTaskBatchSize {
 				entry.WithField(MinerID, miner.ID).Debug("miner task batch size exceed")
@@ -667,7 +672,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 					hashs = append(hashs, s.VHF.Data)
 					n := rebuilder.NodeManager.GetNode(s.NodeID)
 					if n == nil {
-						entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("get miner info of sibling shard %d: %d", i, s.ID)
+						entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(errors.New("miner not found")).Errorf("get miner info of sibling shard %d: %d", i, s.ID)
 						locations = append(locations, &pb.P2PLocation{NodeId: "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r", Addrs: []string{"/ip4/127.0.0.1/tcp/59999"}})
 					} else {
 						entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("decode miner info of sibling shard %d: %d", s.ID, n.ID)
@@ -722,7 +727,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 			continue
 		}
 		tasks.ExpiredTime = expiredTime
-		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d， expired time is %d", len(tasks.Tasklist), tasks.ExpiredTime)
+		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d, expired time is %d, total time: %dms", len(tasks.Tasklist), tasks.ExpiredTime, (time.Now().UnixNano()-sTime)/1000000)
 		entry.WithField(MinerID, miner.ID).Tracef("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
 		return tasks, nil
 	}
@@ -781,5 +786,6 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) error
 		}
 	}
 	entry.Tracef("<time trace> Update task status (%d tasks): %d", len(result.Id), (time.Now().UnixNano()-startTime)/1000000)
+	entry.Debugf("Update task status (%d tasks): %dms", len(result.Id), (time.Now().UnixNano()-startTime)/1000000)
 	return nil
 }
