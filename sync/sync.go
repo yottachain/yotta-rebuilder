@@ -59,7 +59,7 @@ func StartSync(subscriberBufferSize, pingWait, readWait, writeWait int, topic st
 				svc.lock.Unlock()
 				cli.Run()
 				svc.lock.Lock()
-				entry.WithError(err).Errorf("connect to SN%d successful", snID)
+				entry.Infof("connect to SN%d successful", snID)
 				time.Sleep(time.Duration(3) * time.Second)
 			}
 		}()

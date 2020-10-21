@@ -2,7 +2,6 @@ package ytrebuilder
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -544,12 +543,12 @@ func (rebuilder *Rebuilder) reaper() {
 func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription, error) {
 	entry := log.WithFields(log.Fields{Function: "GetRebuildTasks", RebuilderID: id})
 	entry.Debug("ready for fetching rebuildable tasks")
-	tokenCount := rebuilder.ratelimiter.TakeAvailable(1)
-	if tokenCount == 0 {
-		err := errors.New("token bucket is empty, no tasks can be allocated")
-		entry.Debug(err)
-		return nil, err
-	}
+	// tokenCount := rebuilder.ratelimiter.TakeAvailable(1)
+	// if tokenCount == 0 {
+	// 	err := errors.New("token bucket is empty, no tasks can be allocated")
+	// 	entry.Debug(err)
+	// 	return nil, err
+	// }
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	randtag := r.Int31()
 	startTime := time.Now().UnixNano()
@@ -564,12 +563,18 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		entry.WithError(err).Error("fetch rebuilder miner")
 		return nil, err
 	}
-	entry.Debugf("<time trace %d>1. Get rebuilder node: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
+	entry.Tracef("<time trace %d>1. Get rebuilder node: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 	startTime = time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
 	if rbNode.Rebuilding > 0 || rbNode.Status > 1 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		err := fmt.Errorf("no tasks can be allocated to miner %d", id)
-		entry.WithError(err).Errorf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
+		entry.WithError(err).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
+		return nil, err
+	}
+	tokenCount := rebuilder.ratelimiter.TakeAvailable(1)
+	if tokenCount == 0 {
+		err := errors.New("token bucket is empty, no tasks can be allocated")
+		entry.Debug(err)
 		return nil, err
 	}
 	//在待重建矿机表中查找状态为2的矿机
@@ -589,7 +594,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 			continue
 		}
 		entry.WithField(MinerID, miner.ID).Debug("decode miner info")
-		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>2. Decode miner: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
+		entry.WithField(MinerID, miner.ID).Tracef("<time trace %d>2. Decode miner: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 		startTime = time.Now().UnixNano()
 		expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
 		//查找属于当前矿机的未重建或重建超时分片
@@ -600,7 +605,12 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		}
 		i := 0
 		tasks := new(pb.MultiTaskDescription)
+		beginTime := time.Now().UnixNano()
 		for cur2.Next(context.Background()) {
+			if time.Now().UnixNano()-beginTime > 2000000000 {
+				entry.WithField(MinerID, miner.ID).Debug("time expired of creating rebuild tasks")
+				return nil, errors.New("time expired of creating rebuild tasks")
+			}
 			//达到单台矿机最大可分配分片数则停止分配
 			if i == rebuilder.Params.RebuildShardMinerTaskBatchSize {
 				entry.WithField(MinerID, miner.ID).Debug("miner task batch size exceed")
@@ -614,8 +624,8 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 				i--
 				continue
 			}
-			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debug("decode shard info")
-			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("<time trace %d>3. Decode shard: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
+			//entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debug("decode shard info")
+			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("<time trace %d>3. Decode shard: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 			startTime = time.Now().UnixNano()
 			updateTime := time.Now().UnixNano()
 			//更新待重建分片的时间戳
@@ -625,7 +635,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 				i--
 				continue
 			}
-			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("<time trace %d>4. Update shard timstamp: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
+			entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("<time trace %d>4. Update shard timstamp: %d", randtag, (time.Now().UnixNano()-startTime)/1000000)
 			startTime = time.Now().UnixNano()
 			//未更新表示分片已被其他协程更新，跳过
 			if result.ModifiedCount == 0 {
@@ -657,12 +667,12 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 						break
 					}
 					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d: %d", i, s.ID)
-					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("<time trace %d>4. Decode sibling shard %d: %d", randtag, i, (time.Now().UnixNano()-startTime)/1000000)
+					entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("<time trace %d>4. Decode sibling shard %d: %d", randtag, i, (time.Now().UnixNano()-startTime)/1000000)
 					startTime = time.Now().UnixNano()
 					hashs = append(hashs, s.VHF.Data)
 					n := rebuilder.NodeManager.GetNode(s.NodeID)
 					if n == nil {
-						entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(err).Errorf("get miner info of sibling shard %d: %d", i, s.ID)
+						entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).WithError(errors.New("miner not found")).Errorf("get miner info of sibling shard %d: %d", i, s.ID)
 						locations = append(locations, &pb.P2PLocation{NodeId: "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r", Addrs: []string{"/ip4/127.0.0.1/tcp/59999"}})
 					} else {
 						entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("decode miner info of sibling shard %d: %d", s.ID, n.ID)
@@ -692,7 +702,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 					i--
 					continue
 				}
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("task ID: %s", hex.EncodeToString(task.Id))
+				//entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("task ID: %s", hex.EncodeToString(task.Id))
 				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("create LRC rebuilding task: %+v", task)
 			} else if shard.Type == 0xc258 {
 				//replication
@@ -706,7 +716,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 					i--
 					continue
 				}
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("task ID: %s", hex.EncodeToString(task.Id))
+				//entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("task ID: %s", hex.EncodeToString(task.Id))
 				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("create replication rebuilding task: %+v", task)
 			}
 			btask := append(Uint16ToBytes(uint16(shard.Type)), b...)
@@ -717,8 +727,8 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 			continue
 		}
 		tasks.ExpiredTime = expiredTime
-		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d， expired time is %d", len(tasks.Tasklist), tasks.ExpiredTime)
-		entry.WithField(MinerID, miner.ID).Debugf("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
+		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d, expired time is %d, total time: %dms", len(tasks.Tasklist), tasks.ExpiredTime, (time.Now().UnixNano()-sTime)/1000000)
+		entry.WithField(MinerID, miner.ID).Tracef("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
 		return tasks, nil
 	}
 	err = errors.New("no tasks can be allocated")
@@ -775,6 +785,7 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) error
 			}
 		}
 	}
-	entry.Debugf("<time trace> Update task status (%d tasks): %d", len(result.Id), (time.Now().UnixNano()-startTime)/1000000)
+	entry.Tracef("<time trace> Update task status (%d tasks): %d", len(result.Id), (time.Now().UnixNano()-startTime)/1000000)
+	entry.Debugf("Update task status (%d tasks): %dms", len(result.Id), (time.Now().UnixNano()-startTime)/1000000)
 	return nil
 }
