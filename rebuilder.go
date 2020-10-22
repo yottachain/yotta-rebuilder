@@ -61,7 +61,7 @@ func New(analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *Co
 		return nil, err
 	}
 	entry.Info("node manager created")
-	cache := NewCache(uint64(conf.MaxCacheSize))
+	cache := NewCache(conf.MaxCacheSize)
 	entry.Info("cache created")
 	pool := grpool.NewPool(conf.SyncPoolLength, conf.SyncQueueLength)
 	callback := func(msg *msg.Message) {
@@ -496,6 +496,9 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 				}
 				continue
 			}
+			sort.Slice(shards, func(i, j int) bool {
+				return shards[i].(*RebuildShard).ID > shards[j].(*RebuildShard).ID
+			})
 			_, err = collectionRS.InsertMany(context.Background(), shards)
 			if err != nil {
 				entry.WithField(MinerID, miner.ID).WithError(err).Warn("insert shard-rebuilding tasks")
@@ -703,7 +706,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 					continue
 				}
 				//entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("task ID: %s", hex.EncodeToString(task.Id))
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("create LRC rebuilding task: %+v", task)
+				//entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("create LRC rebuilding task: %+v", task)
 			} else if shard.Type == 0xc258 {
 				//replication
 				task := new(pb.TaskDescriptionCP)
@@ -717,7 +720,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 					continue
 				}
 				//entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Debugf("task ID: %s", hex.EncodeToString(task.Id))
-				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("create replication rebuilding task: %+v", task)
+				//entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Tracef("create replication rebuilding task: %+v", task)
 			}
 			btask := append(Uint16ToBytes(uint16(shard.Type)), b...)
 			tasks.Tasklist = append(tasks.Tasklist, btask)
@@ -773,10 +776,9 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) error
 				if err == mongo.ErrNoDocuments {
 					entry.WithField(MinerID, nodeID).WithField(ShardID, id).Warnf("update timestamp failed: 0 record modified")
 					return fmt.Errorf("modify error count of shard %d failed: 0 record modified", id)
-				} else {
-					entry.WithField(MinerID, nodeID).WithField(ShardID, id).WithField(ShardID, id).WithError(err).Error("decoding shard")
-					return err
 				}
+				entry.WithField(MinerID, nodeID).WithField(ShardID, id).WithField(ShardID, id).WithError(err).Error("decoding shard")
+				return err
 			} else if shard.ErrCount == int32(rebuilder.Params.RetryCount) {
 				entry.WithField(ShardID, id).Warnf("reaching max count of retries: %d", rebuilder.Params.RetryCount)
 				collectionRU.InsertOne(context.Background(), shard)
