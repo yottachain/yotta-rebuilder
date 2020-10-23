@@ -497,7 +497,7 @@ func (rebuilder *Rebuilder) processRebuildableShard() {
 				continue
 			}
 			sort.Slice(shards, func(i, j int) bool {
-				return shards[i].(*RebuildShard).ID > shards[j].(*RebuildShard).ID
+				return shards[i].(RebuildShard).ID < shards[j].(RebuildShard).ID
 			})
 			_, err = collectionRS.InsertMany(context.Background(), shards)
 			if err != nil {
