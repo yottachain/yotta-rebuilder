@@ -214,6 +214,7 @@ message RebuiltMessage {
 message MultiTaskDescription{
 	repeated bytes tasklist = 1;
 	int64 expiredTime = 2;
+	int32 srcNodeID = 3;
 }
 //tasklist列表可能包含rs和副本集两种类型任务，按msgid再解析一次
 
@@ -287,4 +288,5 @@ message MultiTaskOpResult{
 	repeated int32 RES = 2;
 	int32 NodeID = 3;
 	int64 expiredTime = 4;
+	int32 srcNodeID = 5;
 }
