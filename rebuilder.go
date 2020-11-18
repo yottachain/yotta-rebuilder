@@ -730,6 +730,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 			continue
 		}
 		tasks.ExpiredTime = expiredTime
+		tasks.SrcNodeID = miner.ID
 		entry.WithField(MinerID, miner.ID).Debugf("length of task list is %d, expired time is %d, total time: %dms", len(tasks.Tasklist), tasks.ExpiredTime, (time.Now().UnixNano()-sTime)/1000000)
 		entry.WithField(MinerID, miner.ID).Tracef("<time trace %d>5. Finish %d tasks built: %d, total time: %d", randtag, len(tasks.Tasklist), (time.Now().UnixNano()-startTime)/1000000, (time.Now().UnixNano()-sTime)/1000000)
 		return tasks, nil
@@ -742,31 +743,32 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 //UpdateTaskStatus update task status
 func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) error {
 	nodeID := result.NodeID
+	srcNodeID := result.SrcNodeID
 	if time.Now().Unix() > result.ExpiredTime {
 		return errors.New("tasks expired")
 	}
 	startTime := time.Now().UnixNano()
-	entry := log.WithFields(log.Fields{Function: "UpdateTaskStatus"})
-	entry.WithField(MinerID, nodeID).Infof("received rebuilding status: %d results", len(result.Id))
+	entry := log.WithFields(log.Fields{Function: "UpdateTaskStatus", MinerID: srcNodeID, RebuilderID: nodeID})
+	entry.Infof("received rebuilding status: %d results", len(result.Id))
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
 	for i, b := range result.Id {
 		id := BytesToInt64(b[0:8])
 		ret := result.RES[i]
 		if ret == 0 {
-			entry.WithField(MinerID, nodeID).WithField(ShardID, id).Debug("task rebuilt success")
+			entry.WithField(ShardID, id).Debug("task rebuilt success")
 			result, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": id, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
 			if err != nil {
-				entry.WithField(MinerID, nodeID).WithField(ShardID, id).WithError(err).Error("update timestamp to finish tag")
+				entry.WithField(ShardID, id).WithError(err).Error("update timestamp to finish tag")
 				return err
 			}
 			if result.ModifiedCount == 0 {
-				entry.WithField(MinerID, nodeID).WithField(ShardID, id).Warnf("update timestamp failed: 0 record modified")
+				entry.WithField(ShardID, id).Warnf("update timestamp failed: 0 record modified")
 				return fmt.Errorf("modify timestamp of shard %d failed: 0 record modified", id)
 			}
 			rebuilder.Cache.Delete(id)
 		} else if ret == 1 {
-			entry.WithField(MinerID, nodeID).WithField(ShardID, id).Debug("task rebuilt failed")
+			entry.WithField(ShardID, id).Debug("task rebuilt failed")
 			opts := new(options.FindOneAndUpdateOptions)
 			opts = opts.SetReturnDocument(options.After)
 			result := collectionRS.FindOneAndUpdate(context.Background(), bson.M{"_id": id}, bson.M{"$inc": bson.M{"errCount": 1}}, opts)
@@ -774,10 +776,10 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(result *pb.MultiTaskOpResult) error
 			err := result.Decode(shard)
 			if err != nil {
 				if err == mongo.ErrNoDocuments {
-					entry.WithField(MinerID, nodeID).WithField(ShardID, id).Warnf("update timestamp failed: 0 record modified")
+					entry.WithField(ShardID, id).Warnf("update timestamp failed: 0 record modified")
 					return fmt.Errorf("modify error count of shard %d failed: 0 record modified", id)
 				}
-				entry.WithField(MinerID, nodeID).WithField(ShardID, id).WithField(ShardID, id).WithError(err).Error("decoding shard")
+				entry.WithField(ShardID, id).WithField(ShardID, id).WithError(err).Error("decoding shard")
 				return err
 			} else if shard.ErrCount == int32(rebuilder.Params.RetryCount) {
 				entry.WithField(ShardID, id).Warnf("reaching max count of retries: %d", rebuilder.Params.RetryCount)
