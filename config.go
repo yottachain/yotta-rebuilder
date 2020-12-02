@@ -67,8 +67,8 @@ const (
 	MiscRetryCountField = "misc.retry-count"
 	//MiscMaxCacheSizeField Field name of misc.max-cache-size config
 	MiscMaxCacheSizeField = "misc.max-cache-size"
-	//MiscFetchTaskTimeGapField Field name of misc.fetch-task-time-gap
-	MiscFetchTaskTimeGapField = "misc.fetch-task-time-gap"
+	//MiscFetchTaskRateField Field name of misc.fetch-task-rate
+	MiscFetchTaskRateField = "misc.fetch-task-rate"
 	//MiscSyncPoolLengthField Field name of misc.sync-pool-length config
 	MiscSyncPoolLengthField = "misc.sync-pool-length"
 	//MiscSyncQueueLengthField Field name of misc.sync-queue-length config
@@ -134,7 +134,7 @@ type MiscConfig struct {
 	RebuildShardMinerTaskBatchSize  int   `mapstructure:"rebuild-shard-miner-task-batch-size"`
 	RetryCount                      int   `mapstructure:"retry-count"`
 	MaxCacheSize                    int64 `mapstructure:"max-cache-size"`
-	FetchTaskTimeGap                int32 `mapstructure:"fetch-task-time-gap"`
+	FetchTaskRate                   int32 `mapstructure:"fetch-task-rate"`
 	SyncPoolLength                  int   `mapstructure:"sync-pool-length"`
 	SyncQueueLength                 int   `mapstructure:"sync-queue-length"`
 	WeightThreshold                 int   `mapstructure:"weight-threshold"`
