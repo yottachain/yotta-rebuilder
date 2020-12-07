@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -41,6 +42,7 @@ var rootCmd = &cobra.Command{
 			panic(fmt.Sprintf("fatal error when starting rebuilder service: %s\n", err))
 		}
 		rebuilder.Start()
+		rebuilder.TrackingStat(context.Background())
 		lis, err := net.Listen("tcp", config.BindAddr)
 		if err != nil {
 			log.Fatalf("failed to listen address %s: %s\n", config.BindAddr, err)

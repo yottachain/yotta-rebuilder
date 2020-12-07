@@ -242,6 +242,7 @@ var (
 	RebuildShardTab   = "RebuildShard"
 	UnrebuildShardTab = "UnrebuildShard"
 	CPSRecordTab      = "CPSRecord"
+	TrackProgressTab  = "TrackProgress"
 )
 
 //index type of node and supernode collection
