@@ -736,6 +736,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(id int32) (*pb.MultiTaskDescription,
 		}
 		tasks.ExpiredTime = expiredTime
 		tasks.SrcNodeID = minerID
+		tasks.ExpiredTimeGap = int32(rebuilder.Params.RebuildShardExpiredTime)
 		for _, shard := range rshards {
 			if shard.Timestamp == Int64Max {
 				continue
