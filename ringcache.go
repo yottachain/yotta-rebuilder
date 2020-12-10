@@ -121,7 +121,9 @@ func (cache *RingCache) tag(id int64, ret int32) *RebuildShard {
 			cache.index = cache.index - 1
 		}
 		cache.size = cache.size - 1
-		cache.index = cache.index % cache.size
+		if cache.size > 0 {
+			cache.index = cache.index % cache.size
+		}
 		entry.Debugf("delete item with ID %d", id)
 		s.Timestamp = Int64Max
 		return &s
@@ -136,7 +138,9 @@ func (cache *RingCache) tag(id int64, ret int32) *RebuildShard {
 				cache.index = cache.index - 1
 			}
 			cache.size = cache.size - 1
-			cache.index = cache.index % cache.size
+			if cache.size > 0 {
+				cache.index = cache.index % cache.size
+			}
 			entry.Debugf("increase error count of item with ID %d to %d, delete item", id, tmp.ErrCount)
 			s.Timestamp = Int64Max
 			return &s
