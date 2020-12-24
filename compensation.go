@@ -130,7 +130,16 @@ func (rebuilder *Rebuilder) Preprocess() {
 					continue
 				}
 				for _, sr := range shardsRebuilt.ShardsRebuild {
-					collectionRS.UpdateOne(context.Background(), bson.M{"_id": sr.VFI, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+					r, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": sr.VFI, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+					if err != nil {
+						entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
+					} else {
+						if r.ModifiedCount == 1 {
+							entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
+						} else {
+							entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
+						}
+					}
 				}
 				if shardsRebuilt.More {
 					collectionCR.UpdateOne(context.Background(), bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
@@ -189,7 +198,16 @@ func (rebuilder *Rebuilder) Compensate() {
 						ret := rebuilder.taskAllocator[sr.SrcMinerID].TagOne(sr.VFI, 0)
 						if ret != nil {
 							entry.WithField(ShardID, sr.VFI).Debug("compensate shard")
-							collectionRS.UpdateOne(context.Background(), bson.M{"_id": sr.VFI}, bson.M{"$set": bson.M{"timestamp": ret.Timestamp}})
+							r, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": sr.VFI}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+							if err != nil {
+								entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
+							} else {
+								if r.ModifiedCount == 1 {
+									entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
+								} else {
+									entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
+								}
+							}
 							rebuilder.Cache.Delete(sr.VFI)
 						}
 					}

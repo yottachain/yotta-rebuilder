@@ -16,12 +16,12 @@ type RingCache struct {
 	size        int
 	batchSize   int
 	expiredTime int
-	retryCount  int
-	lock        sync.Mutex
+	// retryCount  int
+	lock sync.Mutex
 }
 
 //NewRingCache create a new cache instance
-func NewRingCache(tasks []*RebuildShard, batchSize, expiredTime, retryCount int) *RingCache {
+func NewRingCache(tasks []*RebuildShard, batchSize, expiredTime int) *RingCache {
 	size := len(tasks)
 	index := 0
 	for i := 0; i < size; i++ {
@@ -30,7 +30,7 @@ func NewRingCache(tasks []*RebuildShard, batchSize, expiredTime, retryCount int)
 			break
 		}
 	}
-	return &RingCache{cache: tasks, index: index, size: size, batchSize: batchSize, expiredTime: expiredTime, retryCount: retryCount, lock: sync.Mutex{}}
+	return &RingCache{cache: tasks, index: index, size: size, batchSize: batchSize, expiredTime: expiredTime, lock: sync.Mutex{}}
 }
 
 //Empty whether cache is empty
@@ -62,6 +62,7 @@ func (cache *RingCache) Allocate() []*RebuildShard {
 			break
 		}
 		task.Timestamp = now
+		task.ErrCount++
 		shard := *task
 		tasks = append(tasks, &shard)
 		cache.index = (cache.index + 1) % cache.size
@@ -129,23 +130,26 @@ func (cache *RingCache) tag(id int64, ret int32) *RebuildShard {
 		return &s
 	}
 	if ret == 1 {
-		tmp.ErrCount++
-		s.ErrCount++
-		if cache.cache[index].ErrCount >= int32(cache.retryCount) {
-			copy(cache.cache[index:], cache.cache[index+1:])
-			cache.cache = cache.cache[0 : cache.size-1]
-			if index < cache.index {
-				cache.index = cache.index - 1
-			}
-			cache.size = cache.size - 1
-			if cache.size > 0 {
-				cache.index = cache.index % cache.size
-			}
-			entry.Debugf("increase error count of item with ID %d to %d, delete item", id, tmp.ErrCount)
-			s.Timestamp = Int64Max
-			return &s
-		}
+		return &s
 	}
-	entry.Debugf("increase error count of item with ID %d to %d", id, tmp.ErrCount)
-	return &s
+	// if ret == 1 {
+	// 	tmp.ErrCount++
+	// 	s.ErrCount++
+	// 	if cache.cache[index].ErrCount >= int32(cache.retryCount) {
+	// 		copy(cache.cache[index:], cache.cache[index+1:])
+	// 		cache.cache = cache.cache[0 : cache.size-1]
+	// 		if index < cache.index {
+	// 			cache.index = cache.index - 1
+	// 		}
+	// 		cache.size = cache.size - 1
+	// 		if cache.size > 0 {
+	// 			cache.index = cache.index % cache.size
+	// 		}
+	// 		entry.Debugf("increase error count of item with ID %d to %d, delete item", id, tmp.ErrCount)
+	// 		s.Timestamp = Int64Max
+	// 		return &s
+	// 	}
+	// }
+	// entry.Debugf("increase error count of item with ID %d to %d", id, tmp.ErrCount)
+	return nil
 }
