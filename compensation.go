@@ -94,7 +94,7 @@ func GetRebuildShards(httpCli *http.Client, url string, from int64, count int, s
 }
 
 //Preprocess dealing with orphan shards which has committed by SN but not tagged in rebuild service
-func (rebuilder *Rebuilder) Preprocess() {
+func (rebuilder *Rebuilder) Preprocess(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "Preprocess"})
 	urls := rebuilder.Compensation.AllSyncURLs
 	snCount := len(urls)
@@ -108,11 +108,11 @@ func (rebuilder *Rebuilder) Preprocess() {
 			entry.Infof("starting preprocess SN%d", snID)
 			for {
 				record := new(CPSRecord)
-				err := collectionCR.FindOne(context.Background(), bson.M{"_id": snID}).Decode(record)
+				err := collectionCR.FindOne(ctx, bson.M{"_id": snID}).Decode(record)
 				if err != nil {
 					if err == mongo.ErrNoDocuments {
 						record = &CPSRecord{ID: snID, Start: 0, Timestamp: time.Now().Unix()}
-						_, err := collectionCR.InsertOne(context.Background(), record)
+						_, err := collectionCR.InsertOne(ctx, record)
 						if err != nil {
 							entry.WithError(err).Errorf("insert compensation record: %d", snID)
 							time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
@@ -130,7 +130,7 @@ func (rebuilder *Rebuilder) Preprocess() {
 					continue
 				}
 				for _, sr := range shardsRebuilt.ShardsRebuild {
-					r, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": sr.VFI, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+					r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
 					if err != nil {
 						entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
 					} else {
@@ -142,11 +142,11 @@ func (rebuilder *Rebuilder) Preprocess() {
 					}
 				}
 				if shardsRebuilt.More {
-					collectionCR.UpdateOne(context.Background(), bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
+					collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
 				} else {
 					if len(shardsRebuilt.ShardsRebuild) > 0 {
 						next := shardsRebuilt.ShardsRebuild[len(shardsRebuilt.ShardsRebuild)-1].ID + 1
-						collectionCR.UpdateOne(context.Background(), bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": next, "timestamp": time.Now().Unix()}})
+						collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": next, "timestamp": time.Now().Unix()}})
 					}
 					break
 				}
@@ -159,7 +159,7 @@ func (rebuilder *Rebuilder) Preprocess() {
 }
 
 //Compensate dealing with orphan shards which has been committed by SN when service is running
-func (rebuilder *Rebuilder) Compensate() {
+func (rebuilder *Rebuilder) Compensate(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "Compensate"})
 	urls := rebuilder.Compensation.AllSyncURLs
 	snCount := len(urls)
@@ -171,11 +171,11 @@ func (rebuilder *Rebuilder) Compensate() {
 			entry.Infof("starting compensate SN%d", snID)
 			for {
 				record := new(CPSRecord)
-				err := collectionCR.FindOne(context.Background(), bson.M{"_id": snID}).Decode(record)
+				err := collectionCR.FindOne(ctx, bson.M{"_id": snID}).Decode(record)
 				if err != nil {
 					if err == mongo.ErrNoDocuments {
 						record = &CPSRecord{ID: snID, Start: 0, Timestamp: time.Now().Unix()}
-						_, err := collectionCR.InsertOne(context.Background(), record)
+						_, err := collectionCR.InsertOne(ctx, record)
 						if err != nil {
 							entry.WithError(err).Errorf("insert compensation record: %d", snID)
 							time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
@@ -198,7 +198,7 @@ func (rebuilder *Rebuilder) Compensate() {
 						ret := rebuilder.taskAllocator[sr.SrcMinerID].TagOne(sr.VFI, 0)
 						if ret != nil {
 							entry.WithField(ShardID, sr.VFI).Debug("compensate shard")
-							r, err := collectionRS.UpdateOne(context.Background(), bson.M{"_id": sr.VFI}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+							r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
 							if err != nil {
 								entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
 							} else {
@@ -214,11 +214,11 @@ func (rebuilder *Rebuilder) Compensate() {
 					rebuilder.lock.RUnlock()
 				}
 				if shardsRebuilt.More {
-					collectionCR.UpdateOne(context.Background(), bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
+					collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
 				} else {
 					if len(shardsRebuilt.ShardsRebuild) > 0 {
 						next := shardsRebuilt.ShardsRebuild[len(shardsRebuilt.ShardsRebuild)-1].ID + 1
-						collectionCR.UpdateOne(context.Background(), bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": next, "timestamp": time.Now().Unix()}})
+						collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": next, "timestamp": time.Now().Unix()}})
 					}
 					time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
 				}

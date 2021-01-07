@@ -37,12 +37,13 @@ var rootCmd = &cobra.Command{
 		// 	panic("count of mongoDB URL is not equal to SN count\n")
 		// }
 		initLog(config)
-		rebuilder, err := ytrebuilder.New(config.AnalysisDBURL, config.RebuilderDBURL, config.AuraMQ, config.Compensation, config.MiscConfig)
+		ctx := context.Background()
+		rebuilder, err := ytrebuilder.New(ctx, config.AnalysisDBURL, config.RebuilderDBURL, config.AuraMQ, config.Compensation, config.MiscConfig)
 		if err != nil {
 			panic(fmt.Sprintf("fatal error when starting rebuilder service: %s\n", err))
 		}
-		rebuilder.Start()
-		rebuilder.TrackingStat(context.Background())
+		rebuilder.Start(ctx)
+		rebuilder.TrackingStat(ctx)
 		lis, err := net.Listen("tcp", config.BindAddr)
 		if err != nil {
 			log.Fatalf("failed to listen address %s: %s\n", config.BindAddr, err)
@@ -226,6 +227,8 @@ var (
 	DefaultMiscMaxConcurrentTaskBuilderSize int = 100
 	//DefaultMiscMinerVersionThreshold default value of MiscMinerVersionThreshold
 	DefaultMiscMinerVersionThreshold int = 0
+	//DefaultMiscTaskCacheLocation default value of MiscTaskCacheLocation
+	DefaultMiscTaskCacheLocation string = "/tmp"
 )
 
 func initFlag() {
@@ -308,4 +311,6 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.MiscMaxConcurrentTaskBuilderSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscMaxConcurrentTaskBuilderSizeField))
 	rootCmd.PersistentFlags().Int(ytrebuilder.MiscMinerVersionThresholdField, DefaultMiscMinerVersionThreshold, "miner that version greater than which can be allocated")
 	viper.BindPFlag(ytrebuilder.MiscMinerVersionThresholdField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscMinerVersionThresholdField))
+	rootCmd.PersistentFlags().String(ytrebuilder.MiscTaskCacheLocationField, DefaultMiscTaskCacheLocation, "cache file location of rebuilding miner")
+	viper.BindPFlag(ytrebuilder.MiscTaskCacheLocationField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscTaskCacheLocationField))
 }

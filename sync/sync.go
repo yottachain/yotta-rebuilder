@@ -68,8 +68,8 @@ func StartSync(subscriberBufferSize, pingWait, readWait, writeWait int, topic st
 }
 
 //Send one message to another client
-func (s *Service) Send(to string, content []byte) bool {
-	if ok := s.lock.RTryLock(context.Background()); !ok {
+func (s *Service) Send(ctx context.Context, to string, content []byte) bool {
+	if ok := s.lock.RTryLock(ctx); !ok {
 		return false
 	}
 	defer s.lock.RUnlock()
@@ -77,8 +77,8 @@ func (s *Service) Send(to string, content []byte) bool {
 }
 
 //Publish one message
-func (s *Service) Publish(topic string, content []byte) bool {
-	if ok := s.lock.RTryLock(context.Background()); !ok {
+func (s *Service) Publish(ctx context.Context, topic string, content []byte) bool {
+	if ok := s.lock.RTryLock(ctx); !ok {
 		return false
 	}
 	return s.client.Publish(topic, content)

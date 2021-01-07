@@ -15,7 +15,7 @@ type Server struct {
 
 //GetRebuildTasks implemented GetRebuildTasks function of Rebuilder
 func (server *Server) GetRebuildTasks(ctx context.Context, req *pb.Int32Msg) (*pb.MultiTaskDescription, error) {
-	result, err := server.Rebuilder.GetRebuildTasks(req.GetValue())
+	result, err := server.Rebuilder.GetRebuildTasks(context.Background(), req.GetValue())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, err.Error())
 	}
@@ -24,6 +24,6 @@ func (server *Server) GetRebuildTasks(ctx context.Context, req *pb.Int32Msg) (*p
 
 //UpdateTaskStatus implemented UpdateTaskStatus function of Rebuilder
 func (server *Server) UpdateTaskStatus(ctx context.Context, req *pb.MultiTaskOpResult) (*pb.Empty, error) {
-	err := server.Rebuilder.UpdateTaskStatus(req)
+	err := server.Rebuilder.UpdateTaskStatus(context.Background(), req)
 	return &pb.Empty{}, err
 }

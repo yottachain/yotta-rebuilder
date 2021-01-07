@@ -199,13 +199,16 @@ type PoolWeight struct {
 
 //RebuildMiner miner which is ready to be rebuilt
 type RebuildMiner struct {
-	ID        int32 `bson:"_id"`
-	From      int64 `bson:"from"`
-	To        int64 `bson:"to"`
-	RangeFrom int64 `bson:"rangeFrom"`
-	RangeTo   int64 `bson:"rangeTo"`
-	Status    int32 `bson:"status"`
-	Timestamp int64 `bson:"timestamp"`
+	ID          int32 `bson:"_id"`
+	From        int64 `bson:"from"`
+	To          int64 `bson:"to"`
+	RangeFrom   int64 `bson:"rangeFrom"`
+	RangeTo     int64 `bson:"rangeTo"`
+	Status      int32 `bson:"status"`
+	Timestamp   int64 `bson:"timestamp"`
+	BatchSize   int64 `bson:"batchSize"`
+	Next        int64 `bson:"next"`
+	FinishBuild bool  `bson:"finishBuild"`
 }
 
 //RebuildShard shard which is ready to be rebuilt

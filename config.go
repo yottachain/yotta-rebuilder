@@ -79,6 +79,8 @@ const (
 	MiscMaxConcurrentTaskBuilderSizeField = "misc.max-concurrent-task-builder-size"
 	//MiscMinerVersionThresholdField Field name of misc.miner-version-threshold
 	MiscMinerVersionThresholdField = "misc.miner-version-threshold"
+	//MiscTaskCacheLocationField Field name of misc.task-cache-location
+	MiscTaskCacheLocationField = "misc.task-cache-location"
 )
 
 //Config system configuration
@@ -124,20 +126,21 @@ type LogConfig struct {
 
 //MiscConfig miscellaneous configuration
 type MiscConfig struct {
-	RebuildableMinerTimeGap         int   `mapstructure:"rebuildable-miner-time-gap"`
-	RebuildingMinerCountPerBatch    int   `mapstructure:"rebuilding-miner-count-per-batch"`
-	ProcessRebuildableMinerInterval int   `mapstructure:"process-rebuildable-miner-interval"`
-	ProcessRebuildableShardInterval int   `mapstructure:"process-rebuildable-shard-interval"`
-	ProcessReaperInterval           int   `mapstructure:"process-reaper-interval"`
-	RebuildShardExpiredTime         int   `mapstructure:"rebuild-shard-expired-time"`
-	RebuildShardTaskBatchSize       int   `mapstructure:"rebuild-shard-task-batch-size"`
-	RebuildShardMinerTaskBatchSize  int   `mapstructure:"rebuild-shard-miner-task-batch-size"`
-	RetryCount                      int   `mapstructure:"retry-count"`
-	MaxCacheSize                    int64 `mapstructure:"max-cache-size"`
-	FetchTaskRate                   int32 `mapstructure:"fetch-task-rate"`
-	SyncPoolLength                  int   `mapstructure:"sync-pool-length"`
-	SyncQueueLength                 int   `mapstructure:"sync-queue-length"`
-	WeightThreshold                 int   `mapstructure:"weight-threshold"`
-	MaxConcurrentTaskBuilderSize    int   `mapstructure:"max-concurrent-task-builder-size"`
-	MinerVersionThreshold           int   `mapstructure:"miner-version-threshold"`
+	RebuildableMinerTimeGap         int    `mapstructure:"rebuildable-miner-time-gap"`
+	RebuildingMinerCountPerBatch    int    `mapstructure:"rebuilding-miner-count-per-batch"`
+	ProcessRebuildableMinerInterval int    `mapstructure:"process-rebuildable-miner-interval"`
+	ProcessRebuildableShardInterval int    `mapstructure:"process-rebuildable-shard-interval"`
+	ProcessReaperInterval           int    `mapstructure:"process-reaper-interval"`
+	RebuildShardExpiredTime         int    `mapstructure:"rebuild-shard-expired-time"`
+	RebuildShardTaskBatchSize       int    `mapstructure:"rebuild-shard-task-batch-size"`
+	RebuildShardMinerTaskBatchSize  int    `mapstructure:"rebuild-shard-miner-task-batch-size"`
+	RetryCount                      int    `mapstructure:"retry-count"`
+	MaxCacheSize                    int64  `mapstructure:"max-cache-size"`
+	FetchTaskRate                   int32  `mapstructure:"fetch-task-rate"`
+	SyncPoolLength                  int    `mapstructure:"sync-pool-length"`
+	SyncQueueLength                 int    `mapstructure:"sync-queue-length"`
+	WeightThreshold                 int    `mapstructure:"weight-threshold"`
+	MaxConcurrentTaskBuilderSize    int    `mapstructure:"max-concurrent-task-builder-size"`
+	MinerVersionThreshold           int    `mapstructure:"miner-version-threshold"`
+	TaskCacheLocation               string `mapstructure:"task-cache-location"`
 }

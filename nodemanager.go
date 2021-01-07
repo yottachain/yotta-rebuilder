@@ -15,17 +15,17 @@ type NodeManager struct {
 }
 
 //NewNodeManager create new node manager
-func NewNodeManager(cli *mongo.Client) (*NodeManager, error) {
+func NewNodeManager(ctx context.Context, cli *mongo.Client) (*NodeManager, error) {
 	nodeMgr := new(NodeManager)
 	nodeMgr.Nodes = make(map[int32]*Node)
 	nodeMgr.rwlock = new(sync.RWMutex)
 	collection := cli.Database(RebuilderDB).Collection(NodeTab)
-	cur, err := collection.Find(context.Background(), bson.M{})
+	cur, err := collection.Find(ctx, bson.M{})
 	if err != nil {
 		return nil, err
 	}
-	defer cur.Close(context.Background())
-	for cur.Next(context.Background()) {
+	defer cur.Close(ctx)
+	for cur.Next(ctx) {
 		node := new(Node)
 		err := cur.Decode(node)
 		if err != nil {
