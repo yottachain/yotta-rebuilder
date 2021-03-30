@@ -8,8 +8,12 @@ $ go build -o rebuilder
 ```
 #grpc绑定端口，默认为0.0.0.0:8080
 bind-addr: ":8080"
-#分析库的URL地址，默认为mongodb://127.0.0.1:27017/?connect=direct
-analysisdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
+#分析库的URL地址，默认为root:root@tcp(127.0.0.1:3306)/metabase
+analysisdb-url: "root:root@tcp(127.0.0.1:3306)/metabase"
+#分析库客户端最大数据库连接数
+max-open-conns: 100
+#分析库客户端最大数据库空闲连接数
+max-idle-conns: 200
 #重建库的URL地址，默认为mongodb://127.0.0.1:27017/?connect=direct
 rebuilderdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
 #消息队列相关配置

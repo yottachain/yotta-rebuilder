@@ -38,7 +38,7 @@ var rootCmd = &cobra.Command{
 		// }
 		initLog(config)
 		ctx := context.Background()
-		rebuilder, err := ytrebuilder.New(ctx, config.AnalysisDBURL, config.RebuilderDBURL, config.AuraMQ, config.Compensation, config.MiscConfig)
+		rebuilder, err := ytrebuilder.New(ctx, config.AnalysisDBURL, config.MaxOpenConns, config.MaxIdleConns, config.RebuilderDBURL, config.AuraMQ, config.Compensation, config.MiscConfig)
 		if err != nil {
 			panic(fmt.Sprintf("fatal error when starting rebuilder service: %s\n", err))
 		}
@@ -152,7 +152,11 @@ var (
 	//DefaultBindAddr default value of BindAddr
 	DefaultBindAddr string = ":8080"
 	//DefaultAnalysisDBURL default value of AnalysisDBURL
-	DefaultAnalysisDBURL string = "mongodb://127.0.0.1:27017/?connect=direct"
+	DefaultAnalysisDBURL string = "root:root@tcp(127.0.0.1:3306)/metabase"
+	//DefaultMaxOpenConns default value of MaxOpenConns
+	DefaultMaxOpenConns int = 100
+	//DefaultMaxIdleConns default value of MaxIdleConns
+	DefaultMaxIdleConns int = 200
 	//DefaultRebuilderDBURL default value of RebuilderDBURL
 	DefaultRebuilderDBURL string = "mongodb://127.0.0.1:27017/?connect=direct"
 
@@ -237,6 +241,10 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.BindAddrField, rootCmd.PersistentFlags().Lookup(ytrebuilder.BindAddrField))
 	rootCmd.PersistentFlags().String(ytrebuilder.AnalysisDBURLField, DefaultAnalysisDBURL, "mongoDB URL of analysis database")
 	viper.BindPFlag(ytrebuilder.AnalysisDBURLField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AnalysisDBURLField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MaxOpenConnsField, DefaultMaxOpenConns, "max open connections of TiDB")
+	viper.BindPFlag(ytrebuilder.MaxOpenConnsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MaxOpenConnsField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MaxIdleConnsField, DefaultMaxIdleConns, "max idle connections of TiDB")
+	viper.BindPFlag(ytrebuilder.MaxIdleConnsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MaxIdleConnsField))
 	rootCmd.PersistentFlags().String(ytrebuilder.RebuilderDBURLField, DefaultRebuilderDBURL, "mongoDB URL of rebuilder database")
 	viper.BindPFlag(ytrebuilder.RebuilderDBURLField, rootCmd.PersistentFlags().Lookup(ytrebuilder.RebuilderDBURLField))
 	//AuraMQ config

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
 
 	"github.com/aurawing/auramq"
 	"github.com/aurawing/auramq/msg"
@@ -33,7 +37,8 @@ const Int64Max int64 = 9223372036854775807
 
 //Rebuilder rebuilder
 type Rebuilder struct {
-	analysisdbClient  *mongo.Client
+	//analysisdbClient  *mongo.Client
+	analysisdbClient  *sqlx.DB
 	rebuilderdbClient *mongo.Client
 	NodeManager       *NodeManager
 	Cache             *Cache
@@ -47,13 +52,16 @@ type Rebuilder struct {
 }
 
 //New create a new rebuilder instance
-func New(ctx context.Context, analysisDBURL, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
+func New(ctx context.Context, analysisDBURL string, maxOpenConns, maxIdelConns int, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
 	entry := log.WithFields(log.Fields{Function: "New"})
-	analysisdbClient, err := mongo.Connect(ctx, options.Client().ApplyURI(analysisDBURL))
+	//analysisdbClient, err := mongo.Connect(ctx, options.Client().ApplyURI(analysisDBURL))
+	analysisdbClient, err := sqlx.ConnectContext(ctx, "mysql", analysisDBURL)
 	if err != nil {
 		entry.WithError(err).Errorf("creating analysisDB client failed: %s", analysisDBURL)
 		return nil, err
 	}
+	analysisdbClient.SetMaxOpenConns(maxOpenConns)
+	analysisdbClient.SetMaxIdleConns(maxIdelConns)
 	entry.Infof("analysisDB client created: %s", analysisDBURL)
 	rebuilderdbClient, err := mongo.Connect(ctx, options.Client().ApplyURI(rebuilderDBURL))
 	if err != nil {
@@ -187,7 +195,7 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
-	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
+	//collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
 	curMiner, err := collectionRM.Find(ctx, bson.M{"finishBuild": false})
 	if err != nil {
 		entry.WithError(err).Error("fetching unfinished building miner failed")
@@ -245,7 +253,8 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 				if !rebuilder.Cache.IsFull() {
 					opts := options.FindOptions{}
 					opts.Sort = bson.M{"_id": 1}
-					scur, err := collectionAS.Find(ctx, bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+					//scur, err := collectionAS.Find(ctx, bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+					rows, err := rebuilder.analysisdbClient.QueryxContext(ctx, "select * from shards where bid>=? and bid<? order by id asc", rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
 					if err != nil {
 						entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
 					} else {
@@ -253,9 +262,9 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 						hashs := make([][]byte, 0)
 						nodeIDs := make([]int32, 0)
 						i := rshard.BlockID
-						for scur.Next(ctx) {
+						for rows.Next() {
 							s := new(Shard)
-							err := scur.Decode(s)
+							err := rows.StructScan(s)
 							if err != nil {
 								entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("decoding sibling shard %d failed", i)
 								drop = true
@@ -267,11 +276,14 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 								drop = true
 								break
 							}
-							hashs = append(hashs, s.VHF.Data)
+							hashs = append(hashs, s.VHF)
 							nodeIDs = append(nodeIDs, s.NodeID)
 							i++
 						}
-						scur.Close(ctx)
+						//scur.Close(ctx)
+						if err = rows.Close(); err != nil {
+							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("close result set")
+						}
 						if len(hashs) == int(rshard.VNF) {
 							rebuilder.Cache.Put(rshard.ID, hashs, nodeIDs)
 						}
@@ -341,7 +353,7 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "processRebuildableMiner"})
 	collection := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
-	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
+	//collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	entry.Info("starting rebuildable node processor")
 	for {
@@ -371,11 +383,12 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 			rangeFrom := int64(0)
 			rangeTo := int64(0)
 			shardFrom := new(Shard)
-			opts := options.FindOneOptions{}
-			opts.Sort = bson.M{"_id": 1}
-			err = collectionAS.FindOne(ctx, bson.M{"nodeId": node.ID}, &opts).Decode(shardFrom)
+			//opts := options.FindOneOptions{}
+			//opts.Sort = bson.M{"_id": 1}
+			//err = collectionAS.FindOne(ctx, bson.M{"nodeId": node.ID}, &opts).Decode(shardFrom)
+			err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where nid=? order by id asc limit 1", node.ID).StructScan(shardFrom)
 			if err != nil {
-				if err != mongo.ErrNoDocuments {
+				if err != sql.ErrNoRows {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("finding starting shard")
 					continue
 				}
@@ -383,10 +396,11 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 				rangeFrom = shardFrom.ID
 			}
 			shardTo := new(Shard)
-			opts.Sort = bson.M{"_id": -1}
-			err = collectionAS.FindOne(ctx, bson.M{"nodeId": node.ID}, &opts).Decode(shardTo)
+			//opts.Sort = bson.M{"_id": -1}
+			//err = collectionAS.FindOne(ctx, bson.M{"nodeId": node.ID}, &opts).Decode(shardTo)
+			err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where nid=? order by id desc limit 1", node.ID).StructScan(shardTo)
 			if err != nil {
-				if err != mongo.ErrNoDocuments {
+				if err != sql.ErrNoRows {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("finding ending shard")
 					continue
 				}
@@ -625,7 +639,7 @@ func (rebuilder *Rebuilder) reaper(ctx context.Context) {
 func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.MultiTaskDescription, error) {
 	entry := log.WithFields(log.Fields{Function: "GetRebuildTasks", RebuilderID: id})
 	entry.Debug("ready for fetching rebuildable tasks")
-	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
+	//collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
 	rbNode := rebuilder.NodeManager.GetNode(id)
@@ -707,7 +721,8 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 				//遍历分块内全部分片
 				for i := shard.BlockID; i < shard.BlockID+int64(shard.VNF); i++ {
 					s := new(Shard)
-					err := collectionAS.FindOne(ctx, bson.M{"_id": i}).Decode(s)
+					//err := collectionAS.FindOne(ctx, bson.M{"_id": i}).Decode(s)
+					err := rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where id=?", i).StructScan(s)
 					if err != nil {
 						entry.WithField(MinerID, minerID).WithField(ShardID, shard.ID).WithError(err).Errorf("decoding sibling shard %d", i)
 						break
@@ -715,7 +730,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 					entry.WithField(MinerID, minerID).WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d: %d", i, s.ID)
 					// entry.WithField(MinerID, minerID).WithField(ShardID, shard.ID).Tracef("<time trace %d>4. Decode sibling shard %d: %d", randtag, i, (time.Now().UnixNano()-startTime)/1000000)
 					// startTime = time.Now().UnixNano()
-					hashs = append(hashs, s.VHF.Data)
+					hashs = append(hashs, s.VHF)
 					n := rebuilder.NodeManager.GetNode(s.NodeID)
 					if n == nil {
 						entry.WithField(MinerID, minerID).WithField(ShardID, shard.ID).WithError(errors.New("miner not found")).Errorf("get miner info of sibling shard %d: %d", i, s.ID)

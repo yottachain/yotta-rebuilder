@@ -1,5 +1,7 @@
 bind-addr: ":8080"
-analysisdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
+analysisdb-url: "root:root@tcp(127.0.0.1:3306)/metabase"
+max-open-conns: 100
+max-idle-conns: 200
 rebuilderdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
 auramq:
   subscriber-buffer-size: 1024

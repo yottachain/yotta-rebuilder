@@ -5,6 +5,10 @@ const (
 	BindAddrField = "bind-addr"
 	//AnalysisDBURLField Field name of analysisdb-url config
 	AnalysisDBURLField = "analysisdb-url"
+	//MaxOpenConnsField field name of max-open-conns
+	MaxOpenConnsField = "max-open-conns"
+	//MaxIdleConnsField field name of max-idle-conns
+	MaxIdleConnsField = "max-idle-conns"
 	//RebuilderDBURLField Field name of rebuilderdb-url config
 	RebuilderDBURLField = "rebuilderdb-url"
 
@@ -87,6 +91,8 @@ const (
 type Config struct {
 	BindAddr       string              `mapstructure:"bind-addr"`
 	AnalysisDBURL  string              `mapstructure:"analysisdb-url"`
+	MaxOpenConns   int                 `mapstructure:"max-open-conns"`
+	MaxIdleConns   int                 `mapstructure:"max-idle-conns"`
 	RebuilderDBURL string              `mapstructure:"rebuilderdb-url"`
 	AuraMQ         *AuraMQConfig       `mapstructure:"auramq"`
 	Compensation   *CompensationConfig `mapstructure:"compensation"`

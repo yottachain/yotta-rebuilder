@@ -61,8 +61,8 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 	entry := log.WithFields(log.Fields{Function: "createCache", MinerID: miner.ID})
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
-	collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
-	collectionAB := rebuilder.analysisdbClient.Database(MetaDB).Collection(Blocks)
+	//collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
+	//collectionAB := rebuilder.analysisdbClient.Database(MetaDB).Collection(Blocks)
 	cachepath := filepath.Join(rebuilder.Params.TaskCacheLocation, fmt.Sprintf("%d_%d.srd", miner.ID, miner.Next))
 	err := os.Remove(cachepath)
 	if err != nil {
@@ -93,16 +93,22 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 	}
 	extWriter := gzip.NewWriter(extFile)
 	defer extWriter.Close()
-	opts := options.FindOptions{}
-	opts.Sort = bson.M{"_id": 1}
-	limit := int64(miner.BatchSize)
-	opts.Limit = &limit
-	curShard, err := collectionAS.Find(ctx, bson.M{"nodeId": miner.ID, "_id": bson.M{"$gte": miner.Next}}, &opts)
+	// opts := options.FindOptions{}
+	// opts.Sort = bson.M{"_id": 1}
+	// limit := int64(miner.BatchSize)
+	// opts.Limit = &limit
+	//curShard, err := collectionAS.Find(ctx, bson.M{"nodeId": miner.ID, "_id": bson.M{"$gte": miner.Next}}, &opts)
+	rows, err := rebuilder.analysisdbClient.QueryxContext(ctx, "select * from shards where nid=? and id>=? order by id asc limit ?", miner.ID, miner.Next, miner.BatchSize)
 	if err != nil {
 		entry.WithError(err).Error("fetching shard-rebuilding tasks for caching")
 		return err
 	}
-	defer curShard.Close(ctx)
+	//defer curShard.Close(ctx)
+	defer func() {
+		if err := rows.Close(); err != nil {
+			entry.WithError(err).Error("close result set")
+		}
+	}()
 	shards := make([]interface{}, 0)
 	var lastID int64
 	var total int32
@@ -112,15 +118,16 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 	idx := 0
 	wg := sync.WaitGroup{}
 	wg.Add(rebuilder.Params.MaxConcurrentTaskBuilderSize)
-	for curShard.Next(ctx) {
+	for rows.Next() {
 		shard := new(Shard)
-		err := curShard.Decode(shard)
+		err := rows.StructScan(shard)
 		if err != nil {
 			entry.WithError(err).Error("decoding shard")
 			return err
 		}
 		block := new(Block)
-		err = collectionAB.FindOne(ctx, bson.M{"_id": shard.BlockID}).Decode(block)
+		//err = collectionAB.FindOne(ctx, bson.M{"_id": shard.BlockID}).Decode(block)
+		err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from blocks where id=?", shard.BlockID).StructScan(block)
 		if err != nil {
 			entry.WithField(ShardID, shard.ID).WithError(err).Error("decoding block")
 			return err
@@ -129,7 +136,7 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 		rshard.ID = shard.ID
 		rshard.BlockID = shard.BlockID
 		rshard.MinerID = shard.NodeID
-		rshard.VHF = shard.VHF.Data
+		rshard.VHF = shard.VHF
 		rshard.VNF = block.VNF
 		rshard.SNID = block.SNID
 		rshard.ErrCount = 0
@@ -146,16 +153,17 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 			drop := false
 			opts := options.FindOptions{}
 			opts.Sort = bson.M{"_id": 1}
-			scur, err := collectionAS.Find(ctx, bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+			//scur, err := collectionAS.Find(ctx, bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+			rows, err := rebuilder.analysisdbClient.QueryxContext(ctx, "select * from shards where id>=? and id<? order by id asc", rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
 			if err != nil {
 				entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
 			} else {
 				hashs := make([][]byte, 0)
 				nodeIDs := make([]int32, 0)
 				i := rshard.BlockID
-				for scur.Next(ctx) {
+				for rows.Next() {
 					s := new(Shard)
-					err := scur.Decode(s)
+					err := rows.StructScan(s)
 					if err != nil {
 						entry.WithField(ShardID, shard.ID).WithError(err).Errorf("decoding sibling shard %d", i)
 						drop = true
@@ -167,7 +175,7 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 						drop = true
 						break
 					}
-					hashs = append(hashs, s.VHF.Data)
+					hashs = append(hashs, s.VHF)
 					nodeIDs = append(nodeIDs, s.NodeID)
 					i++
 				}

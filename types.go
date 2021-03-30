@@ -170,18 +170,18 @@ type VNI struct {
 
 //Block block struct
 type Block struct {
-	ID   int64 `bson:"_id"`
-	VNF  int32 `bson:"VNF"`
-	AR   int32 `bson:"AR"`
-	SNID int32 `bson:"snId"`
+	ID   int64 `bson:"_id" db:"id"`
+	VNF  int32 `bson:"VNF" db:"vnf"`
+	AR   int32 `bson:"AR" db:"ar"`
+	SNID int32 `bson:"snId" db:"snid"`
 }
 
 //Shard shard struct
 type Shard struct {
-	ID      int64            `bson:"_id"`
-	BlockID int64            `bson:"blockid"`
-	NodeID  int32            `bson:"nodeId"`
-	VHF     primitive.Binary `bson:"VHF"`
+	ID      int64  `bson:"_id" db:"id"`
+	BlockID int64  `bson:"blockid" db:"bid"`
+	NodeID  int32  `bson:"nodeId" db:"nid"`
+	VHF     []byte `bson:"VHF" db:"vhf"`
 }
 
 //PoolWeight infomation of pool
