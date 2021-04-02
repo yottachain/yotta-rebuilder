@@ -13,6 +13,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/tikv/client-go/rawkv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -61,8 +62,6 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 	entry := log.WithFields(log.Fields{Function: "createCache", MinerID: miner.ID})
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
-	//collectionAS := rebuilder.analysisdbClient.Database(MetaDB).Collection(Shards)
-	//collectionAB := rebuilder.analysisdbClient.Database(MetaDB).Collection(Blocks)
 	cachepath := filepath.Join(rebuilder.Params.TaskCacheLocation, fmt.Sprintf("%d_%d.srd", miner.ID, miner.Next))
 	err := os.Remove(cachepath)
 	if err != nil {
@@ -93,22 +92,11 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 	}
 	extWriter := gzip.NewWriter(extFile)
 	defer extWriter.Close()
-	// opts := options.FindOptions{}
-	// opts.Sort = bson.M{"_id": 1}
-	// limit := int64(miner.BatchSize)
-	// opts.Limit = &limit
-	//curShard, err := collectionAS.Find(ctx, bson.M{"nodeId": miner.ID, "_id": bson.M{"$gte": miner.Next}}, &opts)
-	rows, err := rebuilder.analysisdbClient.QueryxContext(ctx, "select * from shards where nid=? and id>=? order by id asc limit ?", miner.ID, miner.Next, miner.BatchSize)
+	rebuildShards, err := FetchNodeShards(ctx, rebuilder.tikvCli, miner.ID, miner.Next, miner.BatchSize)
 	if err != nil {
 		entry.WithError(err).Error("fetching shard-rebuilding tasks for caching")
 		return err
 	}
-	//defer curShard.Close(ctx)
-	defer func() {
-		if err := rows.Close(); err != nil {
-			entry.WithError(err).Error("close result set")
-		}
-	}()
 	shards := make([]interface{}, 0)
 	var lastID int64
 	var total int32
@@ -118,18 +106,10 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 	idx := 0
 	wg := sync.WaitGroup{}
 	wg.Add(rebuilder.Params.MaxConcurrentTaskBuilderSize)
-	for rows.Next() {
-		shard := new(Shard)
-		err := rows.StructScan(shard)
+	for _, shard := range rebuildShards {
+		block, err := FetchBlock(ctx, rebuilder.tikvCli, shard.BlockID)
 		if err != nil {
-			entry.WithError(err).Error("decoding shard")
-			return err
-		}
-		block := new(Block)
-		//err = collectionAB.FindOne(ctx, bson.M{"_id": shard.BlockID}).Decode(block)
-		err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from blocks where id=?", shard.BlockID).StructScan(block)
-		if err != nil {
-			entry.WithField(ShardID, shard.ID).WithError(err).Error("decoding block")
+			entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
 			return err
 		}
 		rshard := new(RebuildShard)
@@ -154,21 +134,14 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 			opts := options.FindOptions{}
 			opts.Sort = bson.M{"_id": 1}
 			//scur, err := collectionAS.Find(ctx, bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
-			rows, err := rebuilder.analysisdbClient.QueryxContext(ctx, "select * from shards where id>=? and id<? order by id asc", rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+			siblingShards, err := FetchShards(ctx, rebuilder.tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
 			if err != nil {
 				entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
 			} else {
 				hashs := make([][]byte, 0)
 				nodeIDs := make([]int32, 0)
 				i := rshard.BlockID
-				for rows.Next() {
-					s := new(Shard)
-					err := rows.StructScan(s)
-					if err != nil {
-						entry.WithField(ShardID, shard.ID).WithError(err).Errorf("decoding sibling shard %d", i)
-						drop = true
-						break
-					}
+				for _, s := range siblingShards {
 					entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
 					if s.ID != i {
 						entry.WithField(ShardID, shard.ID).WithError(err).Errorf("sibling shard %d not found: %d", i, s.ID)
@@ -295,4 +268,66 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 		entry.Infof("change value of next to %d", lastID+1)
 	}
 	return nil
+}
+
+func FetchBlock(ctx context.Context, tikvCli *rawkv.Client, blockID int64) (*Block, error) {
+	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_BLOCKS, blockID)))
+	if err != nil {
+		return nil, err
+	}
+	block := new(Block)
+	err = block.FillBytes(buf)
+	if err != nil {
+		return nil, err
+	}
+	return block, nil
+}
+
+func FetchShard(ctx context.Context, tikvCli *rawkv.Client, shardID int64) (*Shard, error) {
+	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_SHARDS, shardID)))
+	if err != nil {
+		return nil, err
+	}
+	shard := new(Shard)
+	err = shard.FillBytes(buf)
+	if err != nil {
+		return nil, err
+	}
+	return shard, nil
+}
+
+func FetchNodeShards(ctx context.Context, tikvCli *rawkv.Client, nodeId int32, shardFrom int64, limit int64) ([]*Shard, error) {
+	from := fmt.Sprintf("%019d", shardFrom)
+	to := "9999999999999999999"
+	_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, from)), []byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, to)), int(limit))
+	if err != nil {
+		return nil, err
+	}
+	shards := make([]*Shard, 0)
+	for _, buf := range values {
+		s := new(Shard)
+		err := s.FillBytes(buf)
+		if err != nil {
+			return nil, err
+		}
+		shards = append(shards, s)
+	}
+	return shards, nil
+}
+
+func FetchShards(ctx context.Context, tikvCli *rawkv.Client, shardFrom int64, shardTo int64) ([]*Shard, error) {
+	_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardFrom))), []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardTo))), 164)
+	if err != nil {
+		return nil, err
+	}
+	shards := make([]*Shard, 0)
+	for _, buf := range values {
+		s := new(Shard)
+		err := s.FillBytes(buf)
+		if err != nil {
+			return nil, err
+		}
+		shards = append(shards, s)
+	}
+	return shards, nil
 }

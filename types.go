@@ -1,6 +1,9 @@
 package ytrebuilder
 
 import (
+	"errors"
+
+	proto "github.com/golang/protobuf/proto"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -31,6 +34,15 @@ const (
 	//PoolOwner tag
 	PoolOwner = "poolOwner"
 )
+
+const (
+	PFX_BLOCKS     = "blocks"
+	PFX_SHARDS     = "shards"
+	PFX_SHARDNODES = "snodes"
+	PFX_CHECKPOINT = "checkpoint"
+)
+
+var NoValError = errors.New("value not found")
 
 // Node instance
 type Node struct {
@@ -166,6 +178,13 @@ type DNI struct {
 type VNI struct {
 	ID  int32  `bson:"_id"`
 	VNI []byte `bson:"vni"`
+}
+
+//CheckPoint struct
+type CheckPoint struct {
+	ID        int32 `bson:"_id" db:"id"`
+	Start     int64 `bson:"start" db:"start"`
+	Timestamp int64 `bson:"timestamp" db:"timestamp"`
 }
 
 //Block block struct
@@ -472,4 +491,104 @@ func ConvertSpotCheckListsToSpotCheckListsMsg(spotCheckLists []*SpotCheckList) [
 		spotCheckListMsgs[i] = s.Convert()
 	}
 	return spotCheckListMsgs
+}
+
+// Convert convert Block strcut to BlockMsg
+func (block *Block) Convert() *pb.BlockMsg {
+	return &pb.BlockMsg{
+		Id:   block.ID,
+		Vnf:  block.VNF,
+		Ar:   block.AR,
+		SnID: block.SNID,
+	}
+}
+
+// Fillby convert BlockMsg to Block struct
+func (block *Block) Fillby(msg *pb.BlockMsg) {
+	block.ID = msg.Id
+	block.VNF = msg.Vnf
+	block.AR = msg.Ar
+	block.SNID = msg.SnID
+}
+
+// FillBytes convert bytes to Block strcut
+func (block *Block) FillBytes(buf []byte) error {
+	blockMsg := new(pb.BlockMsg)
+	err := proto.Unmarshal(buf, blockMsg)
+	if err != nil {
+		return err
+	}
+	block.Fillby(blockMsg)
+	return nil
+}
+
+// ConvertBytes convert Block struct to bytes
+func (block *Block) ConvertBytes() ([]byte, error) {
+	return proto.Marshal(block.Convert())
+}
+
+// Convert convert Shard strcut to ShardMsg
+func (shard *Shard) Convert() *pb.ShardMsg {
+	return &pb.ShardMsg{
+		Id:      shard.ID,
+		NodeID:  shard.NodeID,
+		Vhf:     shard.VHF,
+		BlockID: shard.BlockID,
+	}
+}
+
+// Fillby convert ShardMsg to Shard struct
+func (shard *Shard) Fillby(msg *pb.ShardMsg) {
+	shard.ID = msg.Id
+	shard.NodeID = msg.NodeID
+	shard.VHF = msg.Vhf
+	shard.BlockID = msg.BlockID
+}
+
+// FillBytes convert bytes to Shard strcut
+func (shard *Shard) FillBytes(buf []byte) error {
+	shardMsg := new(pb.ShardMsg)
+	err := proto.Unmarshal(buf, shardMsg)
+	if err != nil {
+		return err
+	}
+	shard.Fillby(shardMsg)
+	return nil
+}
+
+// ConvertBytes convert Shard struct to bytes
+func (shard *Shard) ConvertBytes() ([]byte, error) {
+	return proto.Marshal(shard.Convert())
+}
+
+// Convert convert Checkpoint strcut to CheckPointMsg
+func (checkpoint *CheckPoint) Convert() *pb.CheckPointMsg {
+	return &pb.CheckPointMsg{
+		Id:        checkpoint.ID,
+		Start:     checkpoint.Start,
+		Timestamp: checkpoint.Timestamp,
+	}
+}
+
+// Fillby convert CheckPointMsg to CheckPoint struct
+func (checkpoint *CheckPoint) Fillby(msg *pb.CheckPointMsg) {
+	checkpoint.ID = msg.Id
+	checkpoint.Start = msg.Start
+	checkpoint.Timestamp = msg.Timestamp
+}
+
+// FillBytes convert bytes to CheckPoint strcut
+func (checkpoint *CheckPoint) FillBytes(buf []byte) error {
+	checkpointMsg := new(pb.CheckPointMsg)
+	err := proto.Unmarshal(buf, checkpointMsg)
+	if err != nil {
+		return err
+	}
+	checkpoint.Fillby(checkpointMsg)
+	return nil
+}
+
+// ConvertBytes convert CheckPoint struct to bytes
+func (checkpoint *CheckPoint) ConvertBytes() ([]byte, error) {
+	return proto.Marshal(checkpoint.Convert())
 }

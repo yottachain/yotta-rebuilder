@@ -3,6 +3,7 @@ package ytrebuilder
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"reflect"
 
 	cyp "github.com/libp2p/go-libp2p-core/crypto"
@@ -155,4 +156,20 @@ func BytesToUint16(bys []byte) uint16 {
 	var data uint16
 	binary.Read(bytebuff, binary.BigEndian, &data)
 	return data
+}
+
+func blocksKey(id int64) string {
+	return fmt.Sprintf("%s_%d", PFX_BLOCKS, id)
+}
+
+func shardsKey(id int64) string {
+	return fmt.Sprintf("%s_%d", PFX_SHARDS, id)
+}
+
+func checkpointKey(id int32) string {
+	return fmt.Sprintf("%s_%d", PFX_CHECKPOINT, id)
+}
+
+func shardsNodeKey(id int64, nodeId int32) string {
+	return fmt.Sprintf("%s_%d_%d", PFX_SHARDNODES, nodeId, id)
 }

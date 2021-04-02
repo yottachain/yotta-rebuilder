@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,15 +15,14 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/jmoiron/sqlx"
-
 	"github.com/aurawing/auramq"
 	"github.com/aurawing/auramq/msg"
 	proto "github.com/golang/protobuf/proto"
 	"github.com/ivpusic/grpool"
 	rl "github.com/juju/ratelimit"
 	log "github.com/sirupsen/logrus"
+	"github.com/tikv/client-go/config"
+	"github.com/tikv/client-go/rawkv"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 	ytsync "github.com/yottachain/yotta-rebuilder/sync"
 	"go.mongodb.org/mongo-driver/bson"
@@ -37,8 +35,7 @@ const Int64Max int64 = 9223372036854775807
 
 //Rebuilder rebuilder
 type Rebuilder struct {
-	//analysisdbClient  *mongo.Client
-	analysisdbClient  *sqlx.DB
+	tikvCli           *rawkv.Client
 	rebuilderdbClient *mongo.Client
 	NodeManager       *NodeManager
 	Cache             *Cache
@@ -52,17 +49,22 @@ type Rebuilder struct {
 }
 
 //New create a new rebuilder instance
-func New(ctx context.Context, analysisDBURL string, maxOpenConns, maxIdelConns int, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
+func New(ctx context.Context, pdURLs []string, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
 	entry := log.WithFields(log.Fields{Function: "New"})
 	//analysisdbClient, err := mongo.Connect(ctx, options.Client().ApplyURI(analysisDBURL))
-	analysisdbClient, err := sqlx.ConnectContext(ctx, "mysql", analysisDBURL)
+	// analysisdbClient, err := sqlx.ConnectContext(ctx, "mysql", analysisDBURL)
+	// if err != nil {
+	// 	entry.WithError(err).Errorf("creating analysisDB client failed: %s", analysisDBURL)
+	// 	return nil, err
+	// }
+	// analysisdbClient.SetMaxOpenConns(maxOpenConns)
+	// analysisdbClient.SetMaxIdleConns(maxIdelConns)
+	// entry.Infof("analysisDB client created: %s", analysisDBURL)
+	tikvCli, err := rawkv.NewClient(ctx, pdURLs, config.Default())
 	if err != nil {
-		entry.WithError(err).Errorf("creating analysisDB client failed: %s", analysisDBURL)
+		entry.WithError(err).Errorf("creating tikv client failed: %v", pdURLs)
 		return nil, err
 	}
-	analysisdbClient.SetMaxOpenConns(maxOpenConns)
-	analysisdbClient.SetMaxIdleConns(maxIdelConns)
-	entry.Infof("analysisDB client created: %s", analysisDBURL)
 	rebuilderdbClient, err := mongo.Connect(ctx, options.Client().ApplyURI(rebuilderDBURL))
 	if err != nil {
 		entry.WithError(err).Errorf("creating rebuilderDB client failed: %s", rebuilderDBURL)
@@ -80,7 +82,7 @@ func New(ctx context.Context, analysisDBURL string, maxOpenConns, maxIdelConns i
 	pool := grpool.NewPool(conf.SyncPoolLength, conf.SyncQueueLength)
 	taskAllocator := make(map[int32]*RingCache)
 	ratelimiter := rl.NewBucketWithRate(float64(conf.FetchTaskRate), int64(conf.FetchTaskRate))
-	rebuilder := &Rebuilder{analysisdbClient: analysisdbClient, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Compensation: cpsConf, Params: conf, ratelimiter: ratelimiter, httpCli: &http.Client{}, taskAllocator: taskAllocator}
+	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Cache: cache, Compensation: cpsConf, Params: conf, ratelimiter: ratelimiter, httpCli: &http.Client{}, taskAllocator: taskAllocator}
 	callback := func(msg *msg.Message) {
 		if msg.GetType() == auramq.BROADCAST {
 			if msg.GetDestination() == mqconf.MinerSyncTopic {
@@ -254,7 +256,8 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 					opts := options.FindOptions{}
 					opts.Sort = bson.M{"_id": 1}
 					//scur, err := collectionAS.Find(ctx, bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
-					rows, err := rebuilder.analysisdbClient.QueryxContext(ctx, "select * from shards where bid>=? and bid<? order by id asc", rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+					//rows, err := rebuilder.analysisdbClient.QueryxContext(ctx, "select * from shards where bid>=? and bid<? order by id asc", rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+					siblingShards, err := FetchShards(ctx, rebuilder.tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
 					if err != nil {
 						entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
 					} else {
@@ -262,14 +265,14 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 						hashs := make([][]byte, 0)
 						nodeIDs := make([]int32, 0)
 						i := rshard.BlockID
-						for rows.Next() {
-							s := new(Shard)
-							err := rows.StructScan(s)
-							if err != nil {
-								entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("decoding sibling shard %d failed", i)
-								drop = true
-								break
-							}
+						for _, s := range siblingShards {
+							// s := new(Shard)
+							// err := rows.StructScan(s)
+							// if err != nil {
+							// 	entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("decoding sibling shard %d failed", i)
+							// 	drop = true
+							// 	break
+							// }
 							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).Tracef("decode sibling shard info %d", i)
 							if s.ID != i {
 								entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, s.ID).WithError(err).Errorf("sibling shard %d not found: %d", i, s.ID)
@@ -281,9 +284,9 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 							i++
 						}
 						//scur.Close(ctx)
-						if err = rows.Close(); err != nil {
-							entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("close result set")
-						}
+						// if err = rows.Close(); err != nil {
+						// 	entry.WithField(MinerID, rshard.MinerID).WithField(ShardID, rshard.ID).WithError(err).Error("close result set")
+						// }
 						if len(hashs) == int(rshard.VNF) {
 							rebuilder.Cache.Put(rshard.ID, hashs, nodeIDs)
 						}
@@ -382,25 +385,27 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 
 			rangeFrom := int64(0)
 			rangeTo := int64(0)
-			shardFrom := new(Shard)
+			//shardFrom := new(Shard)
 			//opts := options.FindOneOptions{}
 			//opts.Sort = bson.M{"_id": 1}
 			//err = collectionAS.FindOne(ctx, bson.M{"nodeId": node.ID}, &opts).Decode(shardFrom)
-			err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where nid=? order by id asc limit 1", node.ID).StructScan(shardFrom)
+			//err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where nid=? order by id asc limit 1", node.ID).StructScan(shardFrom)
+			shardFrom, err := FetchFirstNodeShard(ctx, rebuilder.tikvCli, node.ID)
 			if err != nil {
-				if err != sql.ErrNoRows {
+				if err != NoValError {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("finding starting shard")
 					continue
 				}
 			} else {
 				rangeFrom = shardFrom.ID
 			}
-			shardTo := new(Shard)
+			//shardTo := new(Shard)
 			//opts.Sort = bson.M{"_id": -1}
 			//err = collectionAS.FindOne(ctx, bson.M{"nodeId": node.ID}, &opts).Decode(shardTo)
-			err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where nid=? order by id desc limit 1", node.ID).StructScan(shardTo)
+			//err = rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where nid=? order by id desc limit 1", node.ID).StructScan(shardTo)
+			shardTo, err := FetchLastNodeShard(ctx, rebuilder.tikvCli, node.ID)
 			if err != nil {
-				if err != sql.ErrNoRows {
+				if err != NoValError {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("finding ending shard")
 					continue
 				}
@@ -720,9 +725,10 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 			} else {
 				//遍历分块内全部分片
 				for i := shard.BlockID; i < shard.BlockID+int64(shard.VNF); i++ {
-					s := new(Shard)
+					//s := new(Shard)
 					//err := collectionAS.FindOne(ctx, bson.M{"_id": i}).Decode(s)
-					err := rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where id=?", i).StructScan(s)
+					//err := rebuilder.analysisdbClient.QueryRowxContext(ctx, "select * from shards where id=?", i).StructScan(s)
+					s, err := FetchShard(ctx, rebuilder.tikvCli, i)
 					if err != nil {
 						entry.WithField(MinerID, minerID).WithField(ShardID, shard.ID).WithError(err).Errorf("decoding sibling shard %d", i)
 						break
@@ -879,4 +885,37 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(ctx context.Context, result *pb.Mul
 	}
 	entry.Debugf("Update task status (%d tasks): %dms", len(result.Id), (time.Now().UnixNano()-startTime)/1000000)
 	return nil
+}
+
+func FetchFirstNodeShard(ctx context.Context, tikvCli *rawkv.Client, nodeId int32) (*Shard, error) {
+	shards, err := FetchNodeShards(ctx, tikvCli, nodeId, 0, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(shards) == 0 {
+		return nil, NoValError
+	}
+	return shards[0], nil
+}
+
+func FetchLastNodeShard(ctx context.Context, tikvCli *rawkv.Client, nodeId int32) (*Shard, error) {
+	from := fmt.Sprintf("%019d", 0)
+	to := "9999999999999999999"
+	_, values, err := tikvCli.ReverseScan(ctx, append([]byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, to)), '\x00'), append([]byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, from)), '\x00'), 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, NoValError
+	}
+	shards := make([]*Shard, 0)
+	for _, buf := range values {
+		s := new(Shard)
+		err := s.FillBytes(buf)
+		if err != nil {
+			return nil, err
+		}
+		shards = append(shards, s)
+	}
+	return shards[0], nil
 }

@@ -1,15 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
-	"net/http"
-	"time"
+	"os"
+	"strconv"
 
-	"github.com/golang/protobuf/proto"
+	"github.com/tikv/client-go/config"
+	"github.com/tikv/client-go/rawkv"
 	ytrebuilder "github.com/yottachain/yotta-rebuilder"
 	"github.com/yottachain/yotta-rebuilder/cmd"
-	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 )
 
 func main() {
@@ -17,67 +19,60 @@ func main() {
 }
 
 func main1() {
-	start := int64(0)
-	i := 0
-	for {
-		shardsRebuilt, err := ytrebuilder.GetRebuildShards(new(http.Client), "http://192.168.36.132:8091", start, 100, time.Now().Unix()-int64(180))
+	urls := []string{os.Args[1]}
+	tikvCli, err := rawkv.NewClient(context.TODO(), urls, config.Default())
+	if err != nil {
+		panic(err)
+	}
+	if os.Args[2] == "block" {
+		blockID, err := strconv.ParseInt(os.Args[3], 10, 64)
 		if err != nil {
-			time.Sleep(time.Duration(10) * time.Second)
-			continue
+			panic(err)
 		}
-		for _, sr := range shardsRebuilt.ShardsRebuild {
-			i++
-			fmt.Printf("%d. %d: %d\n", i, sr.ID, sr.VFI)
+		block, err := ytrebuilder.FetchBlock(context.TODO(), tikvCli, blockID)
+		if err != nil {
+			panic(err)
 		}
-		if shardsRebuilt.More {
-			start = shardsRebuilt.Next
-			continue
-		} else {
-			if len(shardsRebuilt.ShardsRebuild) > 0 {
-				start = shardsRebuilt.ShardsRebuild[len(shardsRebuilt.ShardsRebuild)-1].ID + 1
+		fmt.Printf("ID: %d, VNF: %d, AR: %d, SNID: %d\n", block.ID, block.VNF, block.AR, block.SNID)
+	} else if os.Args[2] == "shard" {
+		shardID, err := strconv.ParseInt(os.Args[3], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		shard, err := ytrebuilder.FetchShard(context.TODO(), tikvCli, shardID)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d\n", shard.ID, base64.StdEncoding.EncodeToString(shard.VHF), shard.NodeID, shard.BlockID)
+	} else if os.Args[2] == "nodeshards" {
+		nodeID, err := strconv.ParseInt(os.Args[3], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		var shardFrom int64 = 0
+		for {
+			shards, err := ytrebuilder.FetchNodeShards(context.TODO(), tikvCli, int32(nodeID), shardFrom, 20)
+			if err != nil {
+				panic(err)
 			}
-			time.Sleep(time.Duration(10) * time.Second)
+			if len(shards) == 0 {
+				fmt.Println("finished!")
+				return
+			}
+			for _, s := range shards {
+				fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d\n", s.ID, base64.StdEncoding.EncodeToString(s.VHF), s.NodeID, s.BlockID)
+				shardFrom = s.ID + 1
+			}
+			buf := bufio.NewReader(os.Stdin)
+			sentence, err := buf.ReadBytes('\n')
+			if err != nil {
+				panic(err)
+			} else {
+				if (string(sentence)) == "stop" {
+					return
+				}
+			}
 		}
 	}
-}
 
-func main0() {
-	cli, err := ytrebuilder.NewClient("192.168.36.132:8080")
-	if err != nil {
-		panic(err)
-	}
-	result, err := cli.GetRebuildTasks(context.Background(), 1)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(len(result.Tasklist))
-	ids := make([][]byte, 0)
-	res := make([]int32, 0)
-	for _, b := range result.Tasklist {
-		t := b[0:2]
-		tp := ytrebuilder.BytesToUint16(t)
-		if tp == 0x68b3 {
-			task := new(pb.TaskDescription)
-			err := proto.Unmarshal(b[2:], task)
-			if err != nil {
-				panic(err)
-			}
-			fmt.Printf("id: %d -> %+v\n", ytrebuilder.BytesToInt64(task.Id), task)
-			ids = append(ids, task.Id)
-			res = append(res, 0)
-		} else if tp == 0xc258 {
-			task := new(pb.TaskDescriptionCP)
-			err := proto.Unmarshal(b[2:], task)
-			if err != nil {
-				panic(err)
-			}
-			fmt.Printf("id: %d -> %+v\n", ytrebuilder.BytesToInt64(task.Id), task)
-			ids = append(ids, task.Id)
-			res = append(res, 0)
-		}
-	}
-	err = cli.UpdateTaskStatus(context.Background(), &pb.MultiTaskOpResult{Id: ids, RES: res})
-	if err != nil {
-		panic(err)
-	}
 }

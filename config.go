@@ -3,12 +3,8 @@ package ytrebuilder
 const (
 	//BindAddrField Field name of bind-addr config
 	BindAddrField = "bind-addr"
-	//AnalysisDBURLField Field name of analysisdb-url config
-	AnalysisDBURLField = "analysisdb-url"
-	//MaxOpenConnsField field name of max-open-conns
-	MaxOpenConnsField = "max-open-conns"
-	//MaxIdleConnsField field name of max-idle-conns
-	MaxIdleConnsField = "max-idle-conns"
+	//PDURLsField Field name of pd-urls config
+	PDURLsField = "pd-urls"
 	//RebuilderDBURLField Field name of rebuilderdb-url config
 	RebuilderDBURLField = "rebuilderdb-url"
 
@@ -90,9 +86,7 @@ const (
 //Config system configuration
 type Config struct {
 	BindAddr       string              `mapstructure:"bind-addr"`
-	AnalysisDBURL  string              `mapstructure:"analysisdb-url"`
-	MaxOpenConns   int                 `mapstructure:"max-open-conns"`
-	MaxIdleConns   int                 `mapstructure:"max-idle-conns"`
+	PDURLs         []string            `mapstructure:"pd-urls"`
 	RebuilderDBURL string              `mapstructure:"rebuilderdb-url"`
 	AuraMQ         *AuraMQConfig       `mapstructure:"auramq"`
 	Compensation   *CompensationConfig `mapstructure:"compensation"`

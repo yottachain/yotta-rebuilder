@@ -291,3 +291,23 @@ message MultiTaskOpResult{
 	int64 expiredTime = 4;
 	int32 srcNodeID = 5;
 }
+
+message BlockMsg {
+	int64 id = 1;
+	int32 vnf = 2;
+	int32 ar = 3;
+	int32 snID = 4;
+}
+
+message ShardMsg {
+	int64 id = 1;
+	int32 nodeID = 2;
+	bytes vhf = 3;
+	int64 blockID = 4;
+}
+
+message CheckPointMsg {
+	int32 id = 1;
+	int64 start = 2;
+	int64 timestamp = 3;
+}
