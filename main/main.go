@@ -73,6 +73,25 @@ func main1() {
 				}
 			}
 		}
+	} else if os.Args[2] == "nodeshardsize" {
+		nodeID, err := strconv.ParseInt(os.Args[3], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		var shardFrom int64 = 0
+		total := 0
+		for {
+			shards, err := ytrebuilder.FetchNodeShards(context.TODO(), tikvCli, int32(nodeID), shardFrom, 10000)
+			if err != nil {
+				panic(err)
+			}
+			total += len(shards)
+			if len(shards) == 0 {
+				fmt.Printf("NodeID: %d, Total: %d\n", nodeID, total)
+				return
+			}
+			shardFrom = shards[len(shards)-1].ID + 1
+		}
 	}
 
 }

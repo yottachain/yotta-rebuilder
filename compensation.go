@@ -98,7 +98,7 @@ func (rebuilder *Rebuilder) Preprocess(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "Preprocess"})
 	urls := rebuilder.Compensation.AllSyncURLs
 	snCount := len(urls)
-	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
+	//collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionCR := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(CPSRecordTab)
 	var wg sync.WaitGroup
 	wg.Add(snCount)
@@ -130,16 +130,17 @@ func (rebuilder *Rebuilder) Preprocess(ctx context.Context) {
 					continue
 				}
 				for _, sr := range shardsRebuilt.ShardsRebuild {
-					r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
-					if err != nil {
-						entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
-					} else {
-						if r.ModifiedCount == 1 {
-							entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
-						} else {
-							entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
-						}
-					}
+					// r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+					// if err != nil {
+					// 	entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
+					// } else {
+					// 	if r.ModifiedCount == 1 {
+					// 		entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
+					// 	} else {
+					// 		entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
+					// 	}
+					// }
+					entry.WithField(ShardID, sr.VFI).Debug("shard rebuilt")
 				}
 				if shardsRebuilt.More {
 					collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
@@ -163,7 +164,7 @@ func (rebuilder *Rebuilder) Compensate(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "Compensate"})
 	urls := rebuilder.Compensation.AllSyncURLs
 	snCount := len(urls)
-	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
+	//collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionCR := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(CPSRecordTab)
 	for i := 0; i < snCount; i++ {
 		snID := int32(i)
@@ -193,25 +194,26 @@ func (rebuilder *Rebuilder) Compensate(ctx context.Context) {
 					continue
 				}
 				for _, sr := range shardsRebuilt.ShardsRebuild {
-					rebuilder.lock.RLock()
-					if rebuilder.taskAllocator[sr.SrcMinerID] != nil {
-						ret := rebuilder.taskAllocator[sr.SrcMinerID].TagOne(sr.VFI, 0)
-						if ret != nil {
-							entry.WithField(ShardID, sr.VFI).Debug("compensate shard")
-							r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
-							if err != nil {
-								entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
-							} else {
-								if r.ModifiedCount == 1 {
-									entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
-								} else {
-									entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
-								}
-							}
-							rebuilder.Cache.Delete(sr.VFI)
-						}
-					}
-					rebuilder.lock.RUnlock()
+					// rebuilder.lock.RLock()
+					// if rebuilder.taskAllocator[sr.SrcMinerID] != nil {
+					// 	ret := rebuilder.taskAllocator[sr.SrcMinerID].TagOne(sr.VFI, 0)
+					// 	if ret != nil {
+					// 		entry.WithField(ShardID, sr.VFI).Debug("compensate shard")
+					// 		r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
+					// 		if err != nil {
+					// 			entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
+					// 		} else {
+					// 			if r.ModifiedCount == 1 {
+					// 				entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
+					// 			} else {
+					// 				entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
+					// 			}
+					// 		}
+					// 		rebuilder.Cache.Delete(sr.VFI)
+					// 	}
+					// }
+					// rebuilder.lock.RUnlock()
+					entry.WithField(ShardID, sr.VFI).Debug("shard rebuilt")
 				}
 				if shardsRebuilt.More {
 					collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})

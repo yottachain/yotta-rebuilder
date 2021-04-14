@@ -16,7 +16,6 @@ import (
 	"github.com/tikv/client-go/rawkv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 //HashAndID relate hash and node ID of rebuild shard
@@ -61,7 +60,7 @@ func (rebuilder *Rebuilder) Pipeline(ctx context.Context, minerID int32) {
 func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner) error {
 	entry := log.WithFields(log.Fields{Function: "createCache", MinerID: miner.ID})
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
-	collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
+	//collectionRU := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(UnrebuildShardTab)
 	cachepath := filepath.Join(rebuilder.Params.TaskCacheLocation, fmt.Sprintf("%d_%d.srd", miner.ID, miner.Next))
 	err := os.Remove(cachepath)
 	if err != nil {
@@ -119,7 +118,7 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 		rshard.VHF = shard.VHF
 		rshard.VNF = block.VNF
 		rshard.SNID = block.SNID
-		rshard.ErrCount = 0
+		//rshard.ErrCount = 0
 		if block.AR == -2 {
 			rshard.Type = 0xc258
 			rshard.ParityShardCount = block.VNF
@@ -131,9 +130,8 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 		go func() {
 			defer wg.Done()
 			drop := false
-			opts := options.FindOptions{}
-			opts.Sort = bson.M{"_id": 1}
-			//scur, err := collectionAS.Find(ctx, bson.M{"_id": bson.M{"$gte": rshard.BlockID, "$lt": rshard.BlockID + int64(rshard.VNF)}}, &opts)
+			// opts := options.FindOptions{}
+			// opts.Sort = bson.M{"_id": 1}
 			siblingShards, err := FetchShards(ctx, rebuilder.tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
 			if err != nil {
 				entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
@@ -174,7 +172,7 @@ func (rebuilder *Rebuilder) createCache(ctx context.Context, miner *RebuildMiner
 
 			if drop {
 				entry.WithField(MinerID, miner.ID).WithField(ShardID, shard.ID).Warn("rebuilding task create failed: sibling shards lost")
-				collectionRU.InsertOne(ctx, rshard)
+				//collectionRU.InsertOne(ctx, rshard)
 			} else {
 				lock.Lock()
 				shards = append(shards, rshard)
@@ -297,25 +295,41 @@ func FetchShard(ctx context.Context, tikvCli *rawkv.Client, shardID int64) (*Sha
 }
 
 func FetchNodeShards(ctx context.Context, tikvCli *rawkv.Client, nodeId int32, shardFrom int64, limit int64) ([]*Shard, error) {
+	entry := log.WithFields(log.Fields{Function: "FetchNodeShards", MinerID: nodeId, ShardID: shardFrom, "Limit": limit})
+	batchSize := int64(10000)
 	from := fmt.Sprintf("%019d", shardFrom)
 	to := "9999999999999999999"
-	_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, from)), []byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, to)), int(limit))
-	if err != nil {
-		return nil, err
-	}
 	shards := make([]*Shard, 0)
-	for _, buf := range values {
-		s := new(Shard)
-		err := s.FillBytes(buf)
+	cnt := int64(0)
+	for {
+		lmt := batchSize
+		if cnt+batchSize-limit > 0 {
+			lmt = limit - cnt
+		}
+		_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, from)), []byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, to)), int(lmt))
 		if err != nil {
 			return nil, err
 		}
-		shards = append(shards, s)
+		if len(values) == 0 {
+			break
+		}
+		for _, buf := range values {
+			s := new(Shard)
+			err := s.FillBytes(buf)
+			if err != nil {
+				return nil, err
+			}
+			shards = append(shards, s)
+		}
+		from = fmt.Sprintf("%019d", shards[len(shards)-1].ID+1)
+		cnt += int64(len(values))
 	}
+	entry.Debugf("fetch %d shards", len(shards))
 	return shards, nil
 }
 
 func FetchShards(ctx context.Context, tikvCli *rawkv.Client, shardFrom int64, shardTo int64) ([]*Shard, error) {
+	//entry := log.WithFields(log.Fields{Function: "FetchShards", ShardID: shardFrom})
 	_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardFrom))), []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardTo))), 164)
 	if err != nil {
 		return nil, err
@@ -329,5 +343,6 @@ func FetchShards(ctx context.Context, tikvCli *rawkv.Client, shardFrom int64, sh
 		}
 		shards = append(shards, s)
 	}
+	//entry.Debugf("fetch %d shards", len(shards))
 	return shards, nil
 }
