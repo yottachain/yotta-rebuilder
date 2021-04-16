@@ -587,7 +587,7 @@ func (rebuilder *Rebuilder) readCacheFile(ctx context.Context, miner *RebuildMin
 	entry.Debug("create ring cache")
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
-	_, err = collectionRS.InsertMany(ctx, shards)
+	_, err = collectionRS.InsertMany(ctx, shards, new(options.InsertManyOptions).SetOrdered(false))
 	if err != nil {
 		entry.WithError(err).Error("insert shard-rebuilding tasks")
 		return 0, err
@@ -657,7 +657,7 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 					miner.ExpiredTime = time.Now().UnixNano() + int64(rebuilder.Params.RebuildShardExpiredTime)*1000000000
 					_, err = collectionRM.UpdateOne(ctx, bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{"expiredTime": miner.ExpiredTime}})
 					if err != nil {
-						entry.WithError(err).Errorf("update expired time for miner %d", miner.ID)
+						entry.WithField(MinerID, miner.ID).WithError(err).Error("update expired time")
 						continue
 					}
 				}
@@ -670,29 +670,34 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 							msg := &pb.RebuiltMessage{NodeID: miner.ID}
 							b, err := proto.Marshal(msg)
 							if err != nil {
-								entry.WithError(err).Error("marshaling RebuiltMessage failed")
+								entry.WithField(MinerID, miner.ID).WithError(err).Error("marshaling RebuiltMessage failed")
 							} else {
 								snID := int(miner.ID) % len(rebuilder.mqClis)
 								ret := rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
 								if !ret {
-									entry.Warnf("sending RebuiltMessage of miner %d failed", miner.ID)
+									entry.WithField(MinerID, miner.ID).Warn("sending RebuiltMessage failed")
 								}
 							}
 						}
 					} else {
 						_, err = collectionRM.DeleteOne(ctx, bson.M{"_id": miner.ID})
 						if err != nil {
-							entry.WithError(err).Errorf("delete rebuild miner %d", miner.ID)
+							entry.WithField(MinerID, miner.ID).WithError(err).Error("delete rebuild miner")
+						}
+						_, err = collectionRS.DeleteMany(ctx, bson.M{"minerID": miner.ID})
+						if err != nil {
+							entry.WithField(MinerID, miner.ID).WithError(err).Error("delete finished shard-rebuilding tasks")
+							continue
 						}
 						_, err = collection.UpdateOne(ctx, bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{"tasktimestamp": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}})
 						if err != nil {
-							entry.WithError(err).Errorf("restart rebuild miner %d", miner.ID)
+							entry.WithField(MinerID, miner.ID).WithError(err).Error("restart rebuild miner")
 						}
 						//TODO: 清空缓存
 						cachepathExt := filepath.Join(rebuilder.Params.TaskCacheLocation, fmt.Sprintf("%d_%d.ext", miner.ID, miner.FileIndex))
 						err = os.Remove(cachepathExt)
 						if err != nil {
-							entry.WithError(err).Errorf("delete extend cache file failed: %s", cachepathExt)
+							entry.WithField(MinerID, miner.ID).WithError(err).Errorf("delete extend cache file failed: %s", cachepathExt)
 						}
 					}
 				}
@@ -782,7 +787,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 	}
 	startTime := time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
-	if rbNode.Rebuilding > 0 || rbNode.Status > 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	if rbNode.Rebuilding > 100000 || rbNode.Status > 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		err := fmt.Errorf("no tasks can be allocated to miner %d", id)
 		entry.WithError(err).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
 		return nil, err
