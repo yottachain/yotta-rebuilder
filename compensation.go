@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -93,78 +92,67 @@ func GetRebuildShards(httpCli *http.Client, url string, from int64, count int, s
 	return &ShardsRebuild{ShardsRebuild: response, More: false, Next: 0}, nil
 }
 
-//Preprocess dealing with orphan shards which has committed by SN but not tagged in rebuild service
-func (rebuilder *Rebuilder) Preprocess(ctx context.Context) {
-	entry := log.WithFields(log.Fields{Function: "Preprocess"})
-	urls := rebuilder.Compensation.AllSyncURLs
-	snCount := len(urls)
-	//collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
-	collectionCR := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(CPSRecordTab)
-	var wg sync.WaitGroup
-	wg.Add(snCount)
-	for i := 0; i < snCount; i++ {
-		snID := int32(i)
-		go func() {
-			entry.Infof("starting preprocess SN%d", snID)
-			for {
-				record := new(CPSRecord)
-				err := collectionCR.FindOne(ctx, bson.M{"_id": snID}).Decode(record)
-				if err != nil {
-					if err == mongo.ErrNoDocuments {
-						record = &CPSRecord{ID: snID, Start: 0, Timestamp: time.Now().Unix()}
-						_, err := collectionCR.InsertOne(ctx, record)
-						if err != nil {
-							entry.WithError(err).Errorf("insert compensation record: %d", snID)
-							time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
-							continue
-						}
-					} else {
-						entry.WithError(err).Errorf("find compensation record: %d", snID)
-						time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
-						continue
-					}
-				}
-				shardsRebuilt, err := GetRebuildShards(rebuilder.httpCli, rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
-				if err != nil {
-					time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
-					continue
-				}
-				for _, sr := range shardsRebuilt.ShardsRebuild {
-					// r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI, "timestamp": bson.M{"$lt": Int64Max}}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
-					// if err != nil {
-					// 	entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
-					// } else {
-					// 	if r.ModifiedCount == 1 {
-					// 		entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
-					// 	} else {
-					// 		entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
-					// 	}
-					// }
-					entry.WithField(ShardID, sr.VFI).Debug("shard rebuilt")
-				}
-				if shardsRebuilt.More {
-					collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
-				} else {
-					if len(shardsRebuilt.ShardsRebuild) > 0 {
-						next := shardsRebuilt.ShardsRebuild[len(shardsRebuilt.ShardsRebuild)-1].ID + 1
-						collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": next, "timestamp": time.Now().Unix()}})
-					}
-					break
-				}
-			}
-			entry.Infof("finished pre-process SN%d", snID)
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-}
+// //Preprocess dealing with orphan shards which has committed by SN but not tagged in rebuild service
+// func (rebuilder *Rebuilder) Preprocess(ctx context.Context) {
+// 	entry := log.WithFields(log.Fields{Function: "Preprocess"})
+// 	urls := rebuilder.Compensation.AllSyncURLs
+// 	snCount := len(urls)
+// 	//collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
+// 	collectionCR := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(CPSRecordTab)
+// 	var wg sync.WaitGroup
+// 	wg.Add(snCount)
+// 	for i := 0; i < snCount; i++ {
+// 		snID := int32(i)
+// 		go func() {
+// 			entry.Infof("starting preprocess SN%d", snID)
+// 			for {
+// 				record := new(CPSRecord)
+// 				err := collectionCR.FindOne(ctx, bson.M{"_id": snID}).Decode(record)
+// 				if err != nil {
+// 					if err == mongo.ErrNoDocuments {
+// 						record = &CPSRecord{ID: snID, Start: 0, Timestamp: time.Now().Unix()}
+// 						_, err := collectionCR.InsertOne(ctx, record)
+// 						if err != nil {
+// 							entry.WithError(err).Errorf("insert compensation record: %d", snID)
+// 							time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
+// 							continue
+// 						}
+// 					} else {
+// 						entry.WithError(err).Errorf("find compensation record: %d", snID)
+// 						time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
+// 						continue
+// 					}
+// 				}
+// 				shardsRebuilt, err := GetRebuildShards(rebuilder.httpCli, rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
+// 				if err != nil {
+// 					time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
+// 					continue
+// 				}
+// 				for _, sr := range shardsRebuilt.ShardsRebuild {
+// 					entry.WithField(ShardID, sr.VFI).Debug("shard rebuilt")
+// 				}
+// 				if shardsRebuilt.More {
+// 					collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": shardsRebuilt.Next, "timestamp": time.Now().Unix()}})
+// 				} else {
+// 					if len(shardsRebuilt.ShardsRebuild) > 0 {
+// 						next := shardsRebuilt.ShardsRebuild[len(shardsRebuilt.ShardsRebuild)-1].ID + 1
+// 						collectionCR.UpdateOne(ctx, bson.M{"_id": snID}, bson.M{"$set": bson.M{"start": next, "timestamp": time.Now().Unix()}})
+// 					}
+// 					break
+// 				}
+// 			}
+// 			entry.Infof("finished pre-process SN%d", snID)
+// 			wg.Done()
+// 		}()
+// 	}
+// 	wg.Wait()
+// }
 
 //Compensate dealing with orphan shards which has been committed by SN when service is running
 func (rebuilder *Rebuilder) Compensate(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "Compensate"})
 	urls := rebuilder.Compensation.AllSyncURLs
 	snCount := len(urls)
-	//collectionRS := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildShardTab)
 	collectionCR := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(CPSRecordTab)
 	for i := 0; i < snCount; i++ {
 		snID := int32(i)
@@ -194,25 +182,6 @@ func (rebuilder *Rebuilder) Compensate(ctx context.Context) {
 					continue
 				}
 				for _, sr := range shardsRebuilt.ShardsRebuild {
-					// rebuilder.lock.RLock()
-					// if rebuilder.taskAllocator[sr.SrcMinerID] != nil {
-					// 	ret := rebuilder.taskAllocator[sr.SrcMinerID].TagOne(sr.VFI, 0)
-					// 	if ret != nil {
-					// 		entry.WithField(ShardID, sr.VFI).Debug("compensate shard")
-					// 		r, err := collectionRS.UpdateOne(ctx, bson.M{"_id": sr.VFI}, bson.M{"$set": bson.M{"timestamp": Int64Max}})
-					// 		if err != nil {
-					// 			entry.WithError(err).WithField(ShardID, sr.VFI).Errorf("update timestamp to %d", Int64Max)
-					// 		} else {
-					// 			if r.ModifiedCount == 1 {
-					// 				entry.WithField(ShardID, sr.VFI).Debugf("update timestamp to %d", Int64Max)
-					// 			} else {
-					// 				entry.WithField(ShardID, sr.VFI).Debug("no matched record for updating")
-					// 			}
-					// 		}
-					// 		rebuilder.Cache.Delete(sr.VFI)
-					// 	}
-					// }
-					// rebuilder.lock.RUnlock()
 					entry.WithField(ShardID, sr.VFI).Debug("shard rebuilt")
 				}
 				if shardsRebuilt.More {

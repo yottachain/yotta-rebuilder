@@ -51,7 +51,7 @@ func main1() {
 		}
 		var shardFrom int64 = 0
 		for {
-			shards, err := ytrebuilder.FetchNodeShards(context.TODO(), tikvCli, int32(nodeID), shardFrom, 20)
+			shards, err := ytrebuilder.FetchNodeShards(context.TODO(), tikvCli, int32(nodeID), shardFrom, 9223372036854775807, 20)
 			if err != nil {
 				panic(err)
 			}
@@ -81,7 +81,7 @@ func main1() {
 		var shardFrom int64 = 0
 		total := 0
 		for {
-			shards, err := ytrebuilder.FetchNodeShards(context.TODO(), tikvCli, int32(nodeID), shardFrom, 10000)
+			shards, err := ytrebuilder.FetchNodeShards(context.TODO(), tikvCli, int32(nodeID), shardFrom, 9223372036854775807, 10000)
 			if err != nil {
 				panic(err)
 			}

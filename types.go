@@ -218,32 +218,41 @@ type PoolWeight struct {
 
 //RebuildMiner miner which is ready to be rebuilt
 type RebuildMiner struct {
-	ID        int32 `bson:"_id"`
-	From      int64 `bson:"from"`
-	To        int64 `bson:"to"`
-	RangeFrom int64 `bson:"rangeFrom"`
+	ID    int32           `bson:"_id"`
+	Segs  []int64         `bson:"segs"`
+	Grids map[int64]int64 `bson:"grids"`
+	// From      int64 `bson:"from"`
+	// To        int64 `bson:"to"`
+	// RangeFrom int64 `bson:"rangeFrom"`
 	//RangeTo     int64 `bson:"rangeTo"`
-	Status      int32 `bson:"status"`
-	Timestamp   int64 `bson:"timestamp"`
-	BatchSize   int64 `bson:"batchSize"`
-	FileIndex   int64 `bson:"fileIndex"`
-	Next        int64 `bson:"next"`
+	Status    int32 `bson:"status"`
+	Timestamp int64 `bson:"timestamp"`
+	// BatchSize   int64 `bson:"batchSize"`
+	// FileIndex   int64 `bson:"fileIndex"`
+	// Next        int64 `bson:"next"`
 	FinishBuild bool  `bson:"finishBuild"`
 	ExpiredTime int64 `bson:"expiredTime"`
 }
 
 //RebuildShard shard which is ready to be rebuilt
 type RebuildShard struct {
-	ID               int64  `bson:"_id"`
-	VHF              []byte `bson:"VHF"`
-	MinerID          int32  `bson:"minerID"`
-	BlockID          int64  `bson:"blockID"`
-	Type             int32  `bson:"type"`
-	VNF              int32  `bson:"VNF"`
-	ParityShardCount int32  `bson:"parityShardCount"`
-	SNID             int32  `bson:"snID"`
-	Timestamp        int64  `bson:"timestamp"`
+	ID               int64    `bson:"_id"`
+	VHF              []byte   `bson:"VHF"`
+	MinerID          int32    `bson:"minerID"`
+	BlockID          int64    `bson:"blockID"`
+	Type             int32    `bson:"type"`
+	VNF              int32    `bson:"VNF"`
+	ParityShardCount int32    `bson:"parityShardCount"`
+	SNID             int32    `bson:"snID"`
+	Hashs            [][]byte `json:"h"`
+	NodeIDs          []int32  `json:"n"`
+	//Timestamp        int64  `bson:"timestamp"`
 	//ErrCount         int32  `bson:"errCount"`
+}
+
+type TaskChan struct {
+	ch    chan *RebuildShard
+	close bool
 }
 
 //relative DB and collection name
