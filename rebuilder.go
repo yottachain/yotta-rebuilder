@@ -153,12 +153,13 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 	} else {
 		rebuilder.NodeManager.UpdateNode(node)
 	}
+	rebuilder.SendTask(ctx, node)
 	return nil
 }
 
 //Start starting rebuilding process
 func (rebuilder *Rebuilder) Start(ctx context.Context) {
-	go rebuilder.Compensate(ctx)
+	//go rebuilder.Compensate(ctx)
 	go rebuilder.processRebuildableMiner(ctx)
 	go rebuilder.processRebuildableShard(ctx)
 	go rebuilder.reaper(ctx)
@@ -192,7 +193,6 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 				entry.WithError(err).Error("decoding node")
 				continue
 			}
-
 			rangeFrom := int64(0)
 			rangeTo := int64(0)
 			shardFrom, err := FetchFirstNodeShard(ctx, rebuilder.tikvCli, node.ID)
@@ -201,7 +201,7 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("finding starting shard")
 				} else {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("no shards for rebuilding")
-					//TODO: 没有分片可重建，直接将矿机状态改为3
+					//没有分片可重建，直接将矿机状态改为3
 					msg := &pb.RebuiltMessage{NodeID: node.ID}
 					b, err := proto.Marshal(msg)
 					if err != nil {
@@ -211,6 +211,10 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 						ret := rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
 						if !ret {
 							entry.WithField(MinerID, node.ID).Warn("sending RebuiltMessage failed")
+						}
+						_, err = collection.UpdateOne(ctx, bson.M{"_id": node.ID}, bson.M{"$unset": bson.M{"tasktimestamp": ""}})
+						if err != nil {
+							entry.WithField(MinerID, node.ID).WithError(err).Error("unset tasktimestamp of rebuild miner")
 						}
 					}
 				}
@@ -227,7 +231,6 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 			} else {
 				rangeTo = shardTo.ID
 			}
-
 			segs := make([]int64, 0)
 			grids := make(map[int64]int64)
 			gap := (rangeTo - rangeFrom) / 200
@@ -443,7 +446,7 @@ OUTER:
 				nodeIDs = append(nodeIDs, s.NodeID)
 				i++
 			}
-			if len(hashs) == int(rshard.VNF) {
+			if len(hashs) != int(rshard.VNF) {
 				entry.WithField(ShardID, shard.ID).WithError(err).Errorf("count of sibling shard is %d, not equal to VNF %d", len(hashs), rshard.VNF)
 				continue
 			}
@@ -505,6 +508,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 	var minerID int32 = 0
 OUTER:
 	for mid, taskChan := range rebuilder.taskAllocator {
+		minerID = mid
 		if taskChan.close {
 			continue
 		}
@@ -524,7 +528,6 @@ OUTER:
 					}
 				}
 				rbshards = append(rbshards, t)
-				minerID = mid
 				i++
 				if i == rebuilder.Params.RebuildShardMinerTaskBatchSize {
 					break OUTER
@@ -738,4 +741,58 @@ func FetchLastNodeShard(ctx context.Context, tikvCli *rawkv.Client, nodeId int32
 		shards = append(shards, s)
 	}
 	return shards[0], nil
+}
+
+func BuildTasks2(ctx context.Context, tikvCli *rawkv.Client, shards []*Shard) ([]*RebuildShard, error) {
+	entry := log.WithFields(log.Fields{Function: "buildTasks"})
+	rebuildShards := make([]*RebuildShard, 0)
+OUTER:
+	for _, shard := range shards {
+		block, err := FetchBlock(ctx, tikvCli, shard.BlockID)
+		if err != nil {
+			entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
+			return nil, err
+		}
+		rshard := new(RebuildShard)
+		rshard.ID = shard.ID
+		rshard.BlockID = shard.BlockID
+		rshard.MinerID = shard.NodeID
+		rshard.VHF = shard.VHF
+		rshard.VNF = block.VNF
+		rshard.SNID = block.SNID
+		if block.AR == -2 {
+			rshard.Type = 0xc258
+			rshard.ParityShardCount = block.VNF
+		} else if block.AR > 0 {
+			rshard.Type = 0x68b3
+			rshard.ParityShardCount = block.VNF - block.AR
+		}
+		siblingShards, err := FetchShards(ctx, tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+		if err != nil {
+			entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+			return nil, err
+		} else {
+			hashs := make([][]byte, 0)
+			nodeIDs := make([]int32, 0)
+			i := rshard.BlockID
+			for _, s := range siblingShards {
+				entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
+				if s.ID != i {
+					entry.WithField(ShardID, shard.ID).Errorf("sibling shard %d not found: %d", i, s.ID)
+					continue OUTER
+				}
+				hashs = append(hashs, s.VHF)
+				nodeIDs = append(nodeIDs, s.NodeID)
+				i++
+			}
+			if len(hashs) != int(rshard.VNF) {
+				entry.WithField(ShardID, shard.ID).WithError(err).Errorf("count of sibling shard is %d, not equal to VNF %d", len(hashs), rshard.VNF)
+				continue
+			}
+			rshard.Hashs = hashs
+			rshard.NodeIDs = nodeIDs
+		}
+		rebuildShards = append(rebuildShards, rshard)
+	}
+	return rebuildShards, nil
 }

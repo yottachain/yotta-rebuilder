@@ -42,12 +42,8 @@ misc:
   rebuild-shard-expired-time: 1200
   rebuild-shard-task-batch-size: 10000
   rebuild-shard-miner-task-batch-size: 1000
-  retry-count: 3
-  max-cache-size: 100000
-  fetch-task-rate: 40
   sync-pool-length: 5000
   sync-queue-length: 10000
   weight-threshold: 10
   max-concurrent-task-builder-size: 200
   miner-version-threshold: 100
-  task-cache-location: "/tmp"
