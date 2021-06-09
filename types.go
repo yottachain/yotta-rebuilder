@@ -201,6 +201,7 @@ type Shard struct {
 	BlockID int64  `bson:"blockid" db:"bid"`
 	NodeID  int32  `bson:"nodeId" db:"nid"`
 	VHF     []byte `bson:"VHF" db:"vhf"`
+	NodeID2 int32  `bson:"nodeId2" db:"nid2"`
 }
 
 //PoolWeight infomation of pool
@@ -218,9 +219,9 @@ type PoolWeight struct {
 
 //RebuildMiner miner which is ready to be rebuilt
 type RebuildMiner struct {
-	ID    int32           `bson:"_id"`
-	Segs  []int64         `bson:"segs"`
-	Grids map[int64]int64 `bson:"grids"`
+	ID    int32   `bson:"_id"`
+	Segs  []int64 `bson:"segs"`
+	Grids []int64 `bson:"grids"`
 	// From      int64 `bson:"from"`
 	// To        int64 `bson:"to"`
 	// RangeFrom int64 `bson:"rangeFrom"`
@@ -246,6 +247,7 @@ type RebuildShard struct {
 	SNID             int32    `bson:"snID"`
 	Hashs            [][]byte `json:"h"`
 	NodeIDs          []int32  `json:"n"`
+	MinerID2         int32    `bson:"minerID2"`
 	//Timestamp        int64  `bson:"timestamp"`
 	//ErrCount         int32  `bson:"errCount"`
 }
@@ -545,6 +547,7 @@ func (shard *Shard) Convert() *pb.ShardMsg {
 		NodeID:  shard.NodeID,
 		Vhf:     shard.VHF,
 		BlockID: shard.BlockID,
+		NodeID2: shard.NodeID2,
 	}
 }
 
@@ -554,6 +557,7 @@ func (shard *Shard) Fillby(msg *pb.ShardMsg) {
 	shard.NodeID = msg.NodeID
 	shard.VHF = msg.Vhf
 	shard.BlockID = msg.BlockID
+	shard.NodeID2 = msg.NodeID2
 }
 
 // FillBytes convert bytes to Shard strcut

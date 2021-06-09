@@ -45,11 +45,11 @@ func (rebuilder *Rebuilder) SendTaskLoop(ctx context.Context, node *Node) {
 		n := &net.Node{Id: node.ID, Nodeid: node.NodeID, Pubkey: node.PubKey, Addrs: node.Addrs}
 		req := &pkt.TaskList{Tasklist: tasks.Tasklist, ExpiredTime: tasks.ExpiredTime, SrcNodeID: tasks.SrcNodeID, ExpiredTimeGap: tasks.ExpiredTimeGap}
 		_, e := net.RequestDN(req, n, "")
-		if err != nil {
+		if e != nil {
 			entry.WithError(err).Errorf("Send rebuild task failed: %d--%s", e.Code, e.Msg)
 			f += len(tasks.Tasklist)
 		} else {
-			entry.Infof("Send rebuild task OK,count %d", node.ID, len(tasks.Tasklist))
+			entry.Infof("Send rebuild task OK,count %d", len(tasks.Tasklist))
 		}
 		i += len(tasks.Tasklist)
 		if total-i < rebuilder.Params.RebuildShardMinerTaskBatchSize {

@@ -243,7 +243,8 @@ message TaskDescription{
     repeated bytes hashs=2;
     repeated P2PLocation locations=3;
     int32 parityShardCount=4;
-    int32 recoverId=5;
+	int32 recoverId=5;
+	P2PLocation backupLocation=6;
 }
 
 
@@ -304,6 +305,7 @@ message ShardMsg {
 	int32 nodeID = 2;
 	bytes vhf = 3;
 	int64 blockID = 4;
+	int32 nodeID2 = 5;
 }
 
 message CheckPointMsg {

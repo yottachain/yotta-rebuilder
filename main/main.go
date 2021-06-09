@@ -46,7 +46,21 @@ func main1() {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d\n", shard.ID, base64.StdEncoding.EncodeToString(shard.VHF), shard.NodeID, shard.BlockID)
+		fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d, NodeID2: %d\n", shard.ID, base64.StdEncoding.EncodeToString(shard.VHF), shard.NodeID, shard.BlockID, shard.NodeID2)
+	} else if os.Args[2] == "nodeshard" {
+		shardID, err := strconv.ParseInt(os.Args[3], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		nodeID, err := strconv.ParseInt(os.Args[4], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		shards, err := ytrebuilder.FetchNodeShards(context.TODO(), tikvCli, int32(nodeID), shardID, 9223372036854775807, 1)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d, NodeID2: %d\n", shards[0].ID, base64.StdEncoding.EncodeToString(shards[0].VHF), shards[0].NodeID, shards[0].BlockID, shards[0].NodeID2)
 	} else if os.Args[2] == "nodeshards" {
 		nodeID, err := strconv.ParseInt(os.Args[3], 10, 64)
 		if err != nil {
@@ -63,7 +77,7 @@ func main1() {
 				return
 			}
 			for _, s := range shards {
-				fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d\n", s.ID, base64.StdEncoding.EncodeToString(s.VHF), s.NodeID, s.BlockID)
+				fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d, NodeID2: %d\n", s.ID, base64.StdEncoding.EncodeToString(s.VHF), s.NodeID, s.BlockID, s.NodeID2)
 				shardFrom = s.ID + 1
 			}
 			buf := bufio.NewReader(os.Stdin)

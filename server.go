@@ -15,11 +15,12 @@ type Server struct {
 
 //GetRebuildTasks implemented GetRebuildTasks function of Rebuilder
 func (server *Server) GetRebuildTasks(ctx context.Context, req *pb.Int32Msg) (*pb.MultiTaskDescription, error) {
-	result, err := server.Rebuilder.GetRebuildTasks(context.Background(), req.GetValue())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
-	}
-	return result, nil
+	// result, err := server.Rebuilder.GetRebuildTasks(context.Background(), req.GetValue())
+	// if err != nil {
+	// 	return nil, status.Errorf(codes.Internal, err.Error())
+	// }
+	// return result, nil
+	return nil, status.Errorf(codes.Internal, "no tasks allocated")
 }
 
 //UpdateTaskStatus implemented UpdateTaskStatus function of Rebuilder

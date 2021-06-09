@@ -15,6 +15,8 @@ import (
 	homedir "github.com/mitchellh/go-homedir"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
+	ytnet "github.com/yottachain/YTCoreService/net"
+	ytcrypto "github.com/yottachain/YTCrypto"
 	ytrebuilder "github.com/yottachain/yotta-rebuilder"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 )
@@ -29,6 +31,8 @@ var rootCmd = &cobra.Command{
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	Run: func(cmd *cobra.Command, args []string) {
+		priv, _ := ytcrypto.CreateKey()
+		ytnet.Start(0, 0, priv)
 		config := new(ytrebuilder.Config)
 		if err := viper.Unmarshal(config); err != nil {
 			panic(fmt.Sprintf("unable to decode into config struct, %v\n", err))
