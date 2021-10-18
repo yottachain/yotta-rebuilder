@@ -298,6 +298,7 @@ message BlockMsg {
 	int32 vnf = 2;
 	int32 ar = 3;
 	int32 snID = 4;
+	repeated ShardMsg shards = 5;
 }
 
 message ShardMsg {

@@ -36,7 +36,7 @@ func main1() {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("ID: %d, VNF: %d, AR: %d, SNID: %d\n", block.ID, block.VNF, block.AR, block.SNID)
+		fmt.Printf("ID: %d, VNF: %d, AR: %d, SNID: %d, %d shards\n", block.ID, block.VNF, block.AR, block.SNID, len(block.Shards))
 	} else if os.Args[2] == "shard" {
 		shardID, err := strconv.ParseInt(os.Args[3], 10, 64)
 		if err != nil {
@@ -89,6 +89,21 @@ func main1() {
 					return
 				}
 			}
+		}
+	} else if os.Args[2] == "blocksize" {
+		var blockFrom int64 = 0
+		total := 0
+		for {
+			blocks, err := ytrebuilder.FetchBlocks(context.TODO(), tikvCli, blockFrom, 9223372036854775807, 10000)
+			if err != nil {
+				panic(err)
+			}
+			total += len(blocks)
+			if len(blocks) == 0 {
+				fmt.Printf("Total: %d\n", total)
+				return
+			}
+			blockFrom = blocks[len(blocks)-1].ID + 1
 		}
 	} else if os.Args[2] == "nodeshardsize" {
 		nodeID, err := strconv.ParseInt(os.Args[3], 10, 64)

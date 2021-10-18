@@ -23,6 +23,7 @@ func (rebuilder *Rebuilder) SendTask(ctx context.Context, node *Node) {
 		return
 	}
 	runningNode.nodes[node.ID] = node
+	entry.Info("allocate rebuilding executing miner")
 	go rebuilder.SendTaskLoop(ctx, node)
 }
 
@@ -39,9 +40,10 @@ func (rebuilder *Rebuilder) SendTaskLoop(ctx context.Context, node *Node) {
 	for {
 		tasks, err := rebuilder.GetRebuildTasks(ctx, node.ID)
 		if err != nil {
-			entry.WithError(err).Error("get rebuild tasks")
+			entry.WithError(err).Errorf("Total send %d tasks, %d failed", i, f)
 			return
 		}
+		entry.Debugf("%d rebuild tasks ready", len(tasks.Tasklist))
 		n := &net.Node{Id: node.ID, Nodeid: node.NodeID, Pubkey: node.PubKey, Addrs: node.Addrs}
 		req := &pkt.TaskList{Tasklist: tasks.Tasklist, ExpiredTime: tasks.ExpiredTime, SrcNodeID: tasks.SrcNodeID, ExpiredTimeGap: tasks.ExpiredTimeGap}
 		_, e := net.RequestDN(req, n, "")

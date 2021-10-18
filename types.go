@@ -189,10 +189,11 @@ type CheckPoint struct {
 
 //Block block struct
 type Block struct {
-	ID   int64 `bson:"_id" db:"id"`
-	VNF  int32 `bson:"VNF" db:"vnf"`
-	AR   int32 `bson:"AR" db:"ar"`
-	SNID int32 `bson:"snId" db:"snid"`
+	ID     int64    `bson:"_id" db:"id"`
+	VNF    int32    `bson:"VNF" db:"vnf"`
+	AR     int32    `bson:"AR" db:"ar"`
+	SNID   int32    `bson:"snId" db:"snid"`
+	Shards []*Shard `bson:"-" json:"shards"`
 }
 
 //Shard shard struct
@@ -508,12 +509,16 @@ func ConvertSpotCheckListsToSpotCheckListsMsg(spotCheckLists []*SpotCheckList) [
 
 // Convert convert Block strcut to BlockMsg
 func (block *Block) Convert() *pb.BlockMsg {
-	return &pb.BlockMsg{
+	msg := &pb.BlockMsg{
 		Id:   block.ID,
 		Vnf:  block.VNF,
 		Ar:   block.AR,
 		SnID: block.SNID,
 	}
+	for _, s := range block.Shards {
+		msg.Shards = append(msg.Shards, s.Convert())
+	}
+	return msg
 }
 
 // Fillby convert BlockMsg to Block struct
@@ -522,6 +527,11 @@ func (block *Block) Fillby(msg *pb.BlockMsg) {
 	block.VNF = msg.Vnf
 	block.AR = msg.Ar
 	block.SNID = msg.SnID
+	for _, s := range msg.Shards {
+		shard := new(Shard)
+		shard.Fillby(s)
+		block.Shards = append(block.Shards, shard)
+	}
 }
 
 // FillBytes convert bytes to Block strcut
