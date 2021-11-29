@@ -48,6 +48,7 @@ var rootCmd = &cobra.Command{
 		}
 		rebuilder.Start(ctx)
 		rebuilder.TrackingStat(ctx)
+		rebuilder.TrackingCheckPoints(ctx)
 		lis, err := net.Listen("tcp", config.BindAddr)
 		if err != nil {
 			log.Fatalf("failed to listen address %s: %s\n", config.BindAddr, err)
@@ -181,6 +182,8 @@ var (
 
 	//DefaultCompensationAllSyncURLs default value of CompensationAllSyncURLs
 	DefaultCompensationAllSyncURLs = []string{}
+	//DefaultCompensationSyncClientURL default value of CompensationSyncClientURL
+	DefaultCompensationSyncClientURL = []string{}
 	//DefaultCompensationBatchSize default value of CompensationBatchSize
 	DefaultCompensationBatchSize = 100
 	//DefaultCompensationWaitTime default value of CompensationWaitTime
@@ -256,6 +259,8 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.AuramqClientIDField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqClientIDField))
 	//compensation config
 	rootCmd.PersistentFlags().StringSlice(ytrebuilder.CompensationAllSyncURLsField, DefaultCompensationAllSyncURLs, "all URLs of sync services, in the form of --compensation.all-sync-urls \"URL1,URL2,URL3\"")
+	viper.BindPFlag(ytrebuilder.CompensationAllSyncURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationAllSyncURLsField))
+	rootCmd.PersistentFlags().StringSlice(ytrebuilder.CompensationSyncClientURLField, DefaultCompensationSyncClientURL, "URL of sync client services")
 	viper.BindPFlag(ytrebuilder.CompensationAllSyncURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationAllSyncURLsField))
 	rootCmd.PersistentFlags().Int(ytrebuilder.CompensationBatchSizeField, DefaultCompensationBatchSize, "batch size when fetching shards that have been rebuilt")
 	viper.BindPFlag(ytrebuilder.CompensationBatchSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationBatchSizeField))

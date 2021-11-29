@@ -24,6 +24,7 @@ compensation:
   - "http://127.0.0.1:8093"
   - "http://127.0.0.1:8094"
   - "http://127.0.0.1:8095"
+  sync-client-url: "http://127.0.0.1:8080"
   batch-size: 1000
   wait-time: 10
   skip-time: 180

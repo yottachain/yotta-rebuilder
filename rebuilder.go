@@ -37,6 +37,8 @@ type Rebuilder struct {
 	httpCli           *http.Client
 	lock              sync.RWMutex
 	taskAllocator     map[int32]*TaskChan
+	checkPoints       map[int32]int64
+	lock2             sync.RWMutex
 }
 
 //New create a new rebuilder instance
@@ -60,7 +62,7 @@ func New(ctx context.Context, pdURLs []string, rebuilderDBURL string, mqconf *Au
 	}
 	entry.Info("node manager created")
 	pool := grpool.NewPool(conf.SyncPoolLength, conf.SyncQueueLength)
-	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, Params: conf, httpCli: &http.Client{}, taskAllocator: make(map[int32]*TaskChan)}
+	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, Params: conf, httpCli: &http.Client{}, taskAllocator: make(map[int32]*TaskChan), checkPoints: make(map[int32]int64)}
 	callback := func(msg *msg.Message) {
 		if msg.GetType() == auramq.BROADCAST {
 			if msg.GetDestination() == mqconf.MinerSyncTopic {
@@ -123,7 +125,7 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 		for k, v := range node.Uspaces {
 			cond[fmt.Sprintf("uspaces.%s", k)] = v
 		}
-		if node.Status == 2 && oldNode.Status == 1 {
+		if (node.Status == 2 || node.Status == 3) && oldNode.Status == 1 {
 			cond["tasktimestamp"] = time.Now().Unix()
 		}
 		opts := new(options.FindOneAndUpdateOptions)
@@ -136,12 +138,12 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 			return err
 		}
 		rebuilder.NodeManager.UpdateNode(updatedNode)
-		if updatedNode.Status == 3 && oldNode.Status == 2 {
+		if updatedNode.Status == 99 && oldNode.Status > 1 && oldNode.Status < 99 {
 			//重建完毕，状态改为3，删除旧任务
 			collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
-			_, err = collectionRM.UpdateOne(ctx, bson.M{"_id": updatedNode.ID}, bson.M{"$set": bson.M{"from": 0, "to": 0, "status": 3}})
+			_, err = collectionRM.UpdateOne(ctx, bson.M{"_id": updatedNode.ID}, bson.M{"$set": bson.M{"from": 0, "to": 0, "status": 99}})
 			if err != nil {
-				entry.WithError(err).Error("update rebuild miner status to 3")
+				entry.WithError(err).Error("update rebuild miner status to 99")
 			} else {
 				entry.Info("all rebuild tasks finished")
 			}
@@ -151,7 +153,7 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 			return nil
 		}
 	} else {
-		if node.Status == 2 {
+		if node.Status == 2 || node.Status == 3 {
 			opts := new(options.FindOneAndUpdateOptions)
 			opts = opts.SetReturnDocument(options.After)
 			result := collection.FindOneAndUpdate(ctx, bson.M{"_id": node.ID}, bson.M{"$set": bson.M{"tasktimestamp": time.Now().Unix()}}, opts)
@@ -165,7 +167,7 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 		}
 		rebuilder.NodeManager.UpdateNode(node)
 	}
-	if node.Rebuilding > 100000 || node.Status > 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	if node.Rebuilding > 8000 || node.Status > 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		entry.Debug("can not allocate rebuild task to current miner")
 		return nil
 	}
@@ -187,14 +189,14 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	entry.Info("starting rebuildable node processor")
 	for {
-		cur, err := collection.Find(ctx, bson.M{"status": 2, "tasktimestamp": bson.M{"$exists": true, "$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}})
+		cur, err := collection.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}, "tasktimestamp": bson.M{"$exists": true, "$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}})
 		if err != nil {
 			entry.WithError(err).Error("cannot fetch rebuildable nodes")
 			time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableMinerInterval) * time.Second)
 			continue
 		}
 		for cur.Next(ctx) {
-			cnt, err := collectionRM.CountDocuments(ctx, bson.M{"status": bson.M{"$lt": 3}})
+			cnt, err := collectionRM.CountDocuments(ctx, bson.M{"status": bson.M{"$lt": 99}})
 			if err != nil {
 				entry.WithError(err).Error("cannot calculate count of rebuilding nodes")
 				break
@@ -217,7 +219,7 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("finding starting shard")
 				} else {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("no shards for rebuilding")
-					//没有分片可重建，直接将矿机状态改为3
+					//没有分片可重建，直接将矿机状态改为99
 					msg := &pb.RebuiltMessage{NodeID: node.ID}
 					b, err := proto.Marshal(msg)
 					if err != nil {
@@ -243,8 +245,12 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 			if err != nil {
 				if err != NoValError {
 					entry.WithField(MinerID, node.ID).WithError(err).Error("finding ending shard")
-					continue
+					//continue
+				} else {
+					entry.WithField(MinerID, node.ID).WithError(err).Error("no shards found")
+					//continue
 				}
+				rangeTo = time.Now().Unix() << 32
 			} else {
 				rangeTo = shardTo.ID
 				entry.WithField(MinerID, node.ID).Debugf("rebuilding range ends at %d", rangeTo)
@@ -272,14 +278,18 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 			miner.ID = node.ID
 			miner.Segs = segs
 			miner.Grids = grids
-			miner.Status = node.Status
+			if node.Round == 0 || node.Status == 3 {
+				miner.Status = 3
+			} else {
+				miner.Status = 2
+			}
 			miner.Timestamp = time.Now().Unix()
 			miner.FinishBuild = false
 			_, err = collectionRM.InsertOne(ctx, miner)
 			if err != nil {
 				entry.WithField(MinerID, miner.ID).WithError(err).Error("insert rebuild miner to database")
 			}
-			_, err = collection.UpdateOne(ctx, bson.M{"_id": node.ID}, bson.M{"$unset": bson.M{"tasktimestamp": ""}})
+			_, err = collection.UpdateOne(ctx, bson.M{"_id": node.ID}, bson.M{"$unset": bson.M{"tasktimestamp": ""}, "$inc": bson.M{"round": 1}})
 			if err != nil {
 				entry.WithField(MinerID, miner.ID).WithError(err).Error("unset tasktimestamp of rebuild miner")
 			}
@@ -295,7 +305,7 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 	collection := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	for {
-		cur, err := collectionRM.Find(ctx, bson.M{"status": 2})
+		cur, err := collectionRM.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}})
 		if err != nil {
 			entry.WithError(err).Error("fetching rebuildable miners")
 			time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableShardInterval) * time.Second)
@@ -320,7 +330,14 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 					rebuilder.lock.Unlock()
 				}
 			} else {
-				if time.Now().UnixNano() > miner.ExpiredTime {
+				rebuilder.lock2.RLock()
+				checkpoints := make([]int64, 0, len(rebuilder.checkPoints))
+				for _, value := range rebuilder.checkPoints {
+					checkpoints = append(checkpoints, value)
+				}
+				rebuilder.lock2.RUnlock()
+				checkpoint := Min(checkpoints...)
+				if time.Now().UnixNano() > miner.ExpiredTime && checkpoint > miner.ExpiredTime {
 					_, err := FetchFirstNodeShard(ctx, rebuilder.tikvCli, miner.ID)
 					if err != nil {
 						if err != NoValError {
@@ -375,51 +392,55 @@ func (rebuilder *Rebuilder) Processing(ctx context.Context, miner *RebuildMiner)
 			continue
 		}
 		go func() {
-			entry.Infof("starting goroutine%d from %d to %d, checkpoint is %d", index, begin, to, from)
+			entry.WithField("Grid", index).Infof("starting goroutine from %d to %d, checkpoint is %d", begin, to, from)
 			defer wg.Done()
 			for {
 				rebuildShards, err := FetchNodeShards(ctx, rebuilder.tikvCli, miner.ID, from, to, int64(rebuilder.Params.RebuildShardMinerTaskBatchSize)*10)
 				if err != nil {
-					entry.WithError(err).Error("fetching shard-rebuilding tasks for caching")
+					entry.WithField("Grid", index).WithError(err).Error("fetching shard-rebuilding tasks for caching")
 					time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableShardInterval) * time.Second)
 					continue
 				}
 				if len(rebuildShards) == 0 {
-					entry.Infof("finished goroutine%d from %d to %d", index, begin, to)
+					entry.WithField("Grid", index).Infof("finished shards from %d to %d", begin, to)
 					_, err = collectionRM.UpdateOne(ctx, bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{fmt.Sprintf("grids.%d", index): -1}})
 					if err != nil {
-						entry.WithError(err).Errorf("change grids %d failed: %d", begin, from)
+						entry.WithField("Grid", index).WithError(err).Errorf("change grids %d failed: %d", begin, from)
 					}
 					break
 				}
-				entry.Debugf("fetching %d shards in goroutine%d from %d to %d", len(rebuildShards), index, begin, to)
-				tasks, err := rebuilder.buildTasks(ctx, rebuildShards)
+				entry.WithField("Grid", index).Debugf("fetching %d shards from %d to %d", len(rebuildShards), from, to)
+				tasks, err := rebuilder.buildTasks(ctx, rebuildShards, miner)
 				if err != nil {
-					entry.WithError(err).Error("building tasks")
+					entry.WithField("Grid", index).WithError(err).Error("building tasks")
 					time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableShardInterval) * time.Second)
 					continue
 				}
-				entry.Debugf("build %d tasks in goroutine%d from %d to %d", len(tasks), from, index, begin, to)
+				entry.WithField("Grid", index).Debugf("build %d tasks from %d to %d", len(tasks), from, to)
+				oldfrom := from
 				from = rebuildShards[len(rebuildShards)-1].ID + 1
 				_, err = collectionRM.UpdateOne(ctx, bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{fmt.Sprintf("grids.%d", index): from}})
 				if err != nil {
-					entry.WithError(err).Errorf("change grids %d failed: %d", begin, from)
+					entry.WithField("Grid", index).WithError(err).Errorf("change value of grid.%d failed: %d -> %d", index, oldfrom, from)
 				}
-				entry.Debugf("change value of grid.%d to %d in goroutine%d from %d to %d", begin, from, index, begin, to)
+				entry.WithField("Grid", index).Debugf("change value of grid.%d: %d -> %d", index, oldfrom, from)
 				rebuilder.lock.RLock()
+			OUTER:
 				for _, task := range tasks {
 					select {
 					case rebuilder.taskAllocator[miner.ID].ch <- task:
+						entry.WithField("Grid", index).Debugf("insert shard %d to chan: nodeid -> %d/%d", task.ID, task.MinerID, task.MinerID2)
 						continue
 					default:
+						oldfrom = from
 						from = task.ID
 						_, err = collectionRM.UpdateOne(ctx, bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{fmt.Sprintf("grids.%d", index): from}})
 						if err != nil {
-							entry.WithError(err).Errorf("change grids %d failed: %d", begin, from)
+							entry.WithField("Grid", index).WithError(err).Errorf("task allocator is fullfilled, interrupt goroutine%d: %d -> %d", index, oldfrom, to)
 						}
-						entry.Debugf("task allocator is fullfilled, checked by goroutine%d from %d to %d, lastest ID is %d", index, begin, to, from)
+						entry.WithField("Grid", index).Debugf("task allocator is fullfilled, interrupt goroutine%d: %d -> %d", index, oldfrom, from)
 						time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableShardInterval) * time.Second)
-						//break
+						break OUTER
 					}
 				}
 				rebuilder.lock.RUnlock()
@@ -435,62 +456,110 @@ func (rebuilder *Rebuilder) Processing(ctx context.Context, miner *RebuildMiner)
 	rebuilder.lock.RUnlock()
 }
 
-func (rebuilder *Rebuilder) buildTasks(ctx context.Context, shards []*Shard) ([]*RebuildShard, error) {
+func (rebuilder *Rebuilder) buildTasks(ctx context.Context, shards []*Shard, miner *RebuildMiner) ([]*RebuildShard, error) {
 	entry := log.WithFields(log.Fields{Function: "buildTasks"})
 	rebuildShards := make([]*RebuildShard, 0)
 OUTER:
 	for _, shard := range shards {
-		block, err := FetchBlock(ctx, rebuilder.tikvCli, shard.BlockID)
-		if err != nil {
-			entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
-			return nil, err
-		}
-		entry.Debugf("fetch block %d for shard %d", block.ID, shard.ID)
+
 		rshard := new(RebuildShard)
 		rshard.ID = shard.ID
 		rshard.BlockID = shard.BlockID
 		rshard.MinerID = shard.NodeID
 		rshard.MinerID2 = shard.NodeID2
 		rshard.VHF = shard.VHF
-		rshard.VNF = block.VNF
-		rshard.SNID = block.SNID
-		if block.AR == -2 {
-			rshard.Type = 0xc258
-			rshard.ParityShardCount = block.VNF
-		} else if block.AR > 0 {
-			rshard.Type = 0x68b3
-			rshard.ParityShardCount = block.VNF - block.AR
-		}
-		var siblingShards []*Shard
-		if block.Shards != nil {
-			siblingShards = block.Shards
-		} else {
-			siblingShards, err = FetchShards(ctx, rebuilder.tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+		//rshard.VNF = block.VNF
+		rshard.SNID = snIDFromID(uint64(shard.ID))
+		//rshard.SNID = block.SNID
+		var block *Block
+		var err error
+		if miner.Status == 2 {
+			block, err = FetchBlock(ctx, rebuilder.tikvCli, shard.BlockID)
 			if err != nil {
-				entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+				entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
 				return nil, err
 			}
+			entry.Debugf("fetch block %d for shard %d", block.ID, shard.ID)
+			if block.AR == -2 {
+				rshard.Type = 0xc258
+				rshard.ParityShardCount = block.VNF
+			} else if block.AR > 0 {
+				rshard.Type = 0x68b3
+				rshard.ParityShardCount = block.VNF - block.AR
+			}
+			rshard.VNF = block.VNF
+		} else if miner.Status == 3 {
+			// if block.AR == -2 {
+			// 	rshard.Type = 0xc258
+			// 	rshard.ParityShardCount = block.VNF
+			// } else if block.AR > 0 {
+			rshard.Type = 0xc258
+			if shard.NodeID2 == 0 {
+				rshard.ParityShardCount = 1
+				rshard.VNF = 1
+			} else {
+				rshard.ParityShardCount = 2
+				rshard.VNF = 2
+			}
+			//}
 		}
-		entry.Debugf("fetch %d sibling shards for shard %d", len(siblingShards), rshard.ID)
+		var siblingShards []*Shard
 		hashs := make([][]byte, 0)
 		nodeIDs := make([]int32, 0)
-		i := rshard.BlockID
-		for _, s := range siblingShards {
-			entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
-			if s.ID != i {
-				entry.WithField(ShardID, shard.ID).Errorf("sibling shard %d not found: %d", i, s.ID)
-				continue OUTER
+		if miner.Status == 2 { //|| (miner.Status == 3 && rshard.Type == 0xc258 && rshard.ParityShardCount > 2) {
+			if block.Shards != nil {
+				siblingShards = block.Shards
+			} else {
+				siblingShards, err = FetchShards(ctx, rebuilder.tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+				if err != nil {
+					entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+					return nil, err
+				}
 			}
-			hashs = append(hashs, s.VHF)
-			nodeIDs = append(nodeIDs, s.NodeID)
-			i++
+			entry.Debugf("fetch %d sibling shards for shard %d", len(siblingShards), rshard.ID)
+
+			i := rshard.BlockID
+			needHash := false
+			if rshard.Type == 0x68b3 {
+				needHash = true
+			}
+			for _, s := range siblingShards {
+				entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
+				if s.ID != i {
+					entry.WithField(ShardID, shard.ID).Errorf("sibling shard %d not found: %d", i, s.ID)
+					continue OUTER
+				}
+				if needHash {
+					hashs = append(hashs, s.VHF)
+				}
+				nodeIDs = append(nodeIDs, s.NodeID)
+				i++
+			}
+			if len(hashs) != int(rshard.VNF) {
+				entry.WithField(ShardID, shard.ID).WithError(err).Errorf("count of sibling shard is %d, not equal to VNF %d", len(hashs), rshard.VNF)
+				continue
+			}
+			rshard.Hashs = hashs
+			rshard.NodeIDs = nodeIDs
+		} else if miner.Status == 3 {
+			//hashs = append(hashs, shard.VHF)
+			if miner.ID == shard.NodeID {
+				if shard.NodeID2 != 0 {
+					//hashs = append(hashs, shard.VHF)
+					nodeIDs = append(nodeIDs, shard.NodeID2)
+				}
+				nodeIDs = append(nodeIDs, shard.NodeID)
+			} else if miner.ID == shard.NodeID2 {
+				nodeIDs = append(nodeIDs, shard.NodeID)
+				if shard.NodeID2 != 0 {
+					//hashs = append(hashs, shard.VHF)
+					nodeIDs = append(nodeIDs, shard.NodeID2)
+				}
+			}
+			rshard.Hashs = hashs
+			rshard.NodeIDs = nodeIDs
 		}
-		if len(hashs) != int(rshard.VNF) {
-			entry.WithField(ShardID, shard.ID).WithError(err).Errorf("count of sibling shard is %d, not equal to VNF %d", len(hashs), rshard.VNF)
-			continue
-		}
-		rshard.Hashs = hashs
-		rshard.NodeIDs = nodeIDs
+
 		rebuildShards = append(rebuildShards, rshard)
 	}
 	return rebuildShards, nil
@@ -500,7 +569,7 @@ func (rebuilder *Rebuilder) reaper(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "reaper"})
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	for {
-		cur, err := collectionRM.Find(ctx, bson.M{"status": 2, "finishBuild": true})
+		cur, err := collectionRM.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}, "finishBuild": true})
 		if err != nil {
 			entry.WithError(err).Error("fetching rebuildable miners")
 			time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableShardInterval) * time.Second)
@@ -536,7 +605,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 	entry.Debugf("fetch rebuilding node %d", rbNode.ID)
 	startTime := time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
-	if rbNode.Rebuilding > 100000 || rbNode.Status > 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	if rbNode.Rebuilding > 8000 || rbNode.Status > 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		err := fmt.Errorf("no tasks can be allocated to miner %d", id)
 		entry.WithError(err).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
 		return nil, err
@@ -568,6 +637,11 @@ OUTER:
 						continue OUTER
 					}
 				}
+				// if t.Type == 0x68b3 {
+				// 	entry.Debugf("append rebuild task for miner %d: ID %d, type LRC2", minerID, t.ID)
+				// } else if t.Type == 0xc258 {
+				// 	entry.Debugf("append rebuild task for miner %d: ID %d, type Replication", minerID, t.ID)
+				// }
 				rbshards = append(rbshards, t)
 				i++
 				if i == rebuilder.Params.RebuildShardMinerTaskBatchSize {
@@ -592,6 +666,7 @@ OUTER:
 	expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
 	tasks := new(pb.MultiTaskDescription)
 	for _, shard := range rbshards {
+		entry.Debugf("fetch shard %d: nodeId %d/%d", shard.ID, shard.MinerID, shard.MinerID2)
 		hashs := shard.Hashs
 		locations := make([]*pb.P2PLocation, 0)
 		for _, id := range shard.NodeIDs {
@@ -617,9 +692,18 @@ OUTER:
 			task.RecoverId = int32(shard.ID - shard.BlockID)
 			task.Locations = locations
 			if shard.MinerID2 != 0 {
-				backNode := rebuilder.NodeManager.GetNode(shard.MinerID2)
-				if backNode != nil {
-					task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
+				if minerID == shard.MinerID {
+					backNode := rebuilder.NodeManager.GetNode(shard.MinerID2)
+					if backNode != nil {
+						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
+					}
+				} else if minerID == shard.MinerID2 {
+					backNode := rebuilder.NodeManager.GetNode(shard.MinerID)
+					if backNode != nil {
+						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
+					}
+				} else {
+					entry.Errorf("neither MinerID nor MinerID2 match rebuilder ID for shard %d", shard.ID)
 				}
 			}
 			b, err = proto.Marshal(task)
@@ -642,6 +726,7 @@ OUTER:
 		btask := append(Uint16ToBytes(uint16(shard.Type)), b...)
 		tasks.Tasklist = append(tasks.Tasklist, btask)
 	}
+	//entry.Debugf("append rebuild task for miner %d: %s", minerID, hex.EncodeToString(bytes.Join(tasks.Tasklist, []byte(""))))
 	tasks.ExpiredTime = expiredTime
 	tasks.SrcNodeID = minerID
 	tasks.ExpiredTimeGap = int32(rebuilder.Params.RebuildShardExpiredTime)
@@ -808,7 +893,7 @@ func FetchFirstNodeShard(ctx context.Context, tikvCli *rawkv.Client, nodeId int3
 
 func FetchLastNodeShard(ctx context.Context, tikvCli *rawkv.Client, nodeId int32) (*Shard, error) {
 	from := fmt.Sprintf("%019d", 0)
-	to := "9999999999999999999"
+	to := "9223372036854775807"
 	_, values, err := tikvCli.ReverseScan(ctx, append([]byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, to)), '\x00'), append([]byte(fmt.Sprintf("%s_%d_%s", PFX_SHARDNODES, nodeId, from)), '\x00'), 1)
 	if err != nil {
 		return nil, err

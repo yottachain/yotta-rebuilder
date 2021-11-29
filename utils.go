@@ -83,6 +83,9 @@ func Max(num ...int64) int64 {
 
 // Min select minimum value
 func Min(num ...int64) int64 {
+	if len(num) == 0 {
+		return 0
+	}
 	min := num[0]
 	for _, v := range num {
 		if v < min {
@@ -172,4 +175,8 @@ func checkpointKey(id int32) string {
 
 func shardsNodeKey(id int64, nodeId int32) string {
 	return fmt.Sprintf("%s_%d_%d", PFX_SHARDNODES, nodeId, id)
+}
+
+func snIDFromID(id uint64) int32 {
+	return int32((id >> 24) & uint64(0xff))
 }

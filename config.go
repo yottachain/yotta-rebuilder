@@ -29,6 +29,8 @@ const (
 
 	//CompensationAllSyncURLsField Field name of compensation.all-sync-urls
 	CompensationAllSyncURLsField = "compensation.all-sync-urls"
+	//CompensationSyncClientURLField Field name of compensation.sync-client-url
+	CompensationSyncClientURLField = "compensation.sync-client-url"
 	//CompensationBatchSizeField Field name of compensation.batch-size
 	CompensationBatchSizeField = "compensation.batch-size"
 	//CompensationWaitTimeField Field name of compensation.wait-time
@@ -101,10 +103,11 @@ type AuraMQConfig struct {
 
 //CompensationConfig compensation configuration
 type CompensationConfig struct {
-	AllSyncURLs []string `mapstructure:"all-sync-urls"`
-	BatchSize   int      `mapstructure:"batch-size"`
-	WaitTime    int      `mapstructure:"wait-time"`
-	SkipTime    int      `mapstructure:"skip-time"`
+	AllSyncURLs   []string `mapstructure:"all-sync-urls"`
+	SyncClientURL string   `mapstructure:"sync-client-url"`
+	BatchSize     int      `mapstructure:"batch-size"`
+	WaitTime      int      `mapstructure:"wait-time"`
+	SkipTime      int      `mapstructure:"skip-time"`
 }
 
 //LogConfig system log configuration

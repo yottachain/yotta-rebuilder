@@ -34,7 +34,7 @@ func (rebuilder *Rebuilder) SendTaskLoop(ctx context.Context, node *Node) {
 		runningNode.Unlock()
 	}()
 	entry := log.WithFields(log.Fields{Function: "SendTaskLoop", MinerID: node.ID})
-	total := 100000
+	total := 8000
 	i := 0
 	f := 0
 	for {

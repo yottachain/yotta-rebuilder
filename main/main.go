@@ -90,6 +90,54 @@ func main1() {
 				}
 			}
 		}
+	} else if os.Args[2] == "nodeshardsrevert" {
+		nodeID, err := strconv.ParseInt(os.Args[3], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		shardFrom, err := strconv.ParseInt(os.Args[4], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		shardTo, err := strconv.ParseInt(os.Args[5], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		for {
+			_, values, err := tikvCli.ReverseScan(context.TODO(), append([]byte(fmt.Sprintf("%s_%d_%19d", ytrebuilder.PFX_SHARDNODES, nodeID, shardTo)), '\x00'), append([]byte(fmt.Sprintf("%s_%d_%19d", ytrebuilder.PFX_SHARDNODES, nodeID, shardFrom)), '\x00'), 20)
+			if err != nil {
+				panic(err)
+			}
+			shards := make([]*ytrebuilder.Shard, 0)
+			for _, buf := range values {
+				s := new(ytrebuilder.Shard)
+				err := s.FillBytes(buf)
+				if err != nil {
+					panic(err)
+				}
+				if s.NodeID != int32(nodeID) && s.NodeID2 != int32(nodeID) {
+					continue
+				}
+				shards = append(shards, s)
+			}
+			if len(shards) == 0 {
+				fmt.Println("finished!")
+				return
+			}
+			for _, s := range shards {
+				fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d, NodeID2: %d\n", s.ID, base64.StdEncoding.EncodeToString(s.VHF), s.NodeID, s.BlockID, s.NodeID2)
+				shardFrom = s.ID + 1
+			}
+			buf := bufio.NewReader(os.Stdin)
+			sentence, err := buf.ReadBytes('\n')
+			if err != nil {
+				panic(err)
+			} else {
+				if (string(sentence)) == "stop" {
+					return
+				}
+			}
+		}
 	} else if os.Args[2] == "blocksize" {
 		var blockFrom int64 = 0
 		total := 0

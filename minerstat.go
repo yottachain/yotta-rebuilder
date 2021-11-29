@@ -156,3 +156,59 @@ func (rebuilder *Rebuilder) TrackingStat(ctx context.Context) {
 		}()
 	}
 }
+
+//TrackingCheckPoints tracking checkpoints of sync client service
+func (rebuilder *Rebuilder) TrackingCheckPoints(ctx context.Context) {
+	entry := log.WithFields(log.Fields{Function: "TrackingCheckPoints"})
+	go func() {
+		for {
+			result, err := GetCheckPoints(rebuilder.httpCli, rebuilder.Compensation.SyncClientURL)
+			if err != nil {
+				entry.WithError(err).Errorf("get checkpoints failed: %s/getCheckPoints", rebuilder.Compensation.SyncClientURL)
+				time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
+				continue
+			}
+			entry.Debugf("get checkpoints: %v", result)
+			rebuilder.lock2.Lock()
+			rebuilder.checkPoints = result
+			rebuilder.lock2.Unlock()
+			time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
+		}
+	}()
+}
+
+//GetCheckPoints get checkpoints from sync client service
+func GetCheckPoints(httpCli *http.Client, url string) (map[int32]int64, error) {
+	entry := log.WithFields(log.Fields{Function: "GetCheckPoints"})
+	fullURL := fmt.Sprintf("%s/getCheckPoints", url)
+	entry.Debugf("fetching checkpoints by URL: %s", fullURL)
+	request, err := http.NewRequest("GET", fullURL, nil)
+	if err != nil {
+		entry.WithError(err).Errorf("create request failed: %s", fullURL)
+		return nil, err
+	}
+	request.Header.Add("Accept-Encoding", "gzip")
+	resp, err := httpCli.Do(request)
+	if err != nil {
+		entry.WithError(err).Errorf("get checkpoints failed: %s", fullURL)
+		return nil, err
+	}
+	defer resp.Body.Close()
+	reader := io.Reader(resp.Body)
+	if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
+		gbuf, err := gzip.NewReader(reader)
+		if err != nil {
+			entry.WithError(err).Errorf("decompress response body: %s", fullURL)
+			return nil, err
+		}
+		reader = io.Reader(gbuf)
+		defer gbuf.Close()
+	}
+	response := make(map[int32]int64, 0)
+	err = json.NewDecoder(reader).Decode(&response)
+	if err != nil {
+		entry.WithError(err).Errorf("decode checkpoints failed: %s", fullURL)
+		return nil, err
+	}
+	return response, nil
+}

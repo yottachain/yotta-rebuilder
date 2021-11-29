@@ -104,6 +104,8 @@ type Node struct {
 	Ext string `bson:"-"`
 	//ErrorCount
 	ErrorCount int32 `bson:"errorCount"`
+	//Round
+	Round int64 `bson:"round"`
 }
 
 //NewNode create a node struct
