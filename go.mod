@@ -17,6 +17,7 @@ require (
 	github.com/tikv/client-go v0.0.0-20210303085855-1be793c46812
 	github.com/yottachain/YTCoreService v0.0.0-20210428015600-0ac94f2234f5
 	github.com/yottachain/YTCrypto v0.0.0-20200122165219-0ea35dc29812
+	github.com/yottachain/yotta-arraybase v0.0.2
 	go.mongodb.org/mongo-driver v1.3.3
 	google.golang.org/grpc v1.26.0
 )

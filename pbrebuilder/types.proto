@@ -303,11 +303,29 @@ message BlockMsg {
 
 message ShardMsg {
 	int64 id = 1;
-	int32 nodeID = 2;
-	bytes vhf = 3;
-	int64 blockID = 4;
-	int32 nodeID2 = 5;
+	bytes vhf = 2;
+	uint64 bindex = 3;
+	int32 offset = 4;
+	int32 nodeID = 5;
+	int32 nodeID2 = 6;
 }
+
+message ShardMetaMsg {
+	int64 id = 1;
+	uint64 bindex = 2;
+	int32 offset = 3;
+	int32 vnf = 4;
+	int32 ar = 5;
+	int64 timestamp = 6;
+}
+
+// message ShardMsg {
+// 	int64 id = 1;
+// 	int32 nodeID = 2;
+// 	bytes vhf = 3;
+// 	int64 blockID = 4;
+// 	int32 nodeID2 = 5;
+// }
 
 message CheckPointMsg {
 	int32 id = 1;

@@ -55,7 +55,7 @@ func (rebuilder *Rebuilder) SendTaskLoop(ctx context.Context, node *Node) {
 		}
 		i += len(tasks.Tasklist)
 		if total-i < rebuilder.Params.RebuildShardMinerTaskBatchSize {
-			entry.Info("Total send %d tasks, %d failed", i, f)
+			entry.Infof("Total send %d tasks, %d failed", i, f)
 			return
 		}
 	}

@@ -1,9 +1,12 @@
 package ytrebuilder
 
 import (
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,6 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tikv/client-go/config"
 	"github.com/tikv/client-go/rawkv"
+	ytab "github.com/yottachain/yotta-arraybase"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 	ytsync "github.com/yottachain/yotta-rebuilder/sync"
 	"go.mongodb.org/mongo-driver/bson"
@@ -459,35 +463,52 @@ func (rebuilder *Rebuilder) Processing(ctx context.Context, miner *RebuildMiner)
 func (rebuilder *Rebuilder) buildTasks(ctx context.Context, shards []*Shard, miner *RebuildMiner) ([]*RebuildShard, error) {
 	entry := log.WithFields(log.Fields{Function: "buildTasks"})
 	rebuildShards := make([]*RebuildShard, 0)
+	var blocksMap map[uint64]*ytab.Block
+	if miner.Status == 2 {
+		bindexes := make([]uint64, 0)
+		for _, s := range shards {
+			bindexes = append(bindexes, s.BIndex)
+		}
+		var err error
+		blocksMap, err = GetBlocks(rebuilder.httpCli, rebuilder.Compensation.SyncClientURL, bindexes)
+		if err != nil {
+			entry.WithError(err).Error("fetching blocks")
+			return nil, err
+		}
+	}
 OUTER:
 	for _, shard := range shards {
-
 		rshard := new(RebuildShard)
 		rshard.ID = shard.ID
-		rshard.BlockID = shard.BlockID
+		rshard.BlockID = shard.ID - int64(shard.Offset)
 		rshard.MinerID = shard.NodeID
 		rshard.MinerID2 = shard.NodeID2
 		rshard.VHF = shard.VHF
 		//rshard.VNF = block.VNF
 		rshard.SNID = snIDFromID(uint64(shard.ID))
 		//rshard.SNID = block.SNID
-		var block *Block
+		var block *ytab.Block
 		var err error
 		if miner.Status == 2 {
-			block, err = FetchBlock(ctx, rebuilder.tikvCli, shard.BlockID)
-			if err != nil {
-				entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
-				return nil, err
+			block = blocksMap[shard.BIndex]
+			if block == nil {
+				entry.WithField(ShardID, shard.ID).Warn("block of shard have deleted")
+				continue
 			}
+			// block, err = FetchBlock(ctx, rebuilder.tikvCli, shard.BlockID)
+			// if err != nil {
+			// 	entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
+			// 	return nil, err
+			// }
 			entry.Debugf("fetch block %d for shard %d", block.ID, shard.ID)
 			if block.AR == -2 {
 				rshard.Type = 0xc258
-				rshard.ParityShardCount = block.VNF
+				rshard.ParityShardCount = int32(block.VNF)
 			} else if block.AR > 0 {
 				rshard.Type = 0x68b3
-				rshard.ParityShardCount = block.VNF - block.AR
+				rshard.ParityShardCount = int32(block.VNF) - int32(block.AR)
 			}
-			rshard.VNF = block.VNF
+			rshard.VNF = int32(block.VNF)
 		} else if miner.Status == 3 {
 			// if block.AR == -2 {
 			// 	rshard.Type = 0xc258
@@ -507,15 +528,18 @@ OUTER:
 		hashs := make([][]byte, 0)
 		nodeIDs := make([]int32, 0)
 		if miner.Status == 2 { //|| (miner.Status == 3 && rshard.Type == 0xc258 && rshard.ParityShardCount > 2) {
-			if block.Shards != nil {
-				siblingShards = block.Shards
-			} else {
-				siblingShards, err = FetchShards(ctx, rebuilder.tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
-				if err != nil {
-					entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
-					return nil, err
-				}
+			for i, s := range block.Shards {
+				siblingShards = append(siblingShards, &Shard{ID: int64(block.ID) + int64(i), VHF: s.VHF, BIndex: shard.BIndex, Offset: uint8(i), NodeID: int32(s.NodeID), NodeID2: int32(s.NodeID2)})
 			}
+			//if block.Shards != nil {
+			//siblingShards = block.Shards
+			// } else {
+			// 	siblingShards, err = FetchShards(ctx, rebuilder.tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+			// 	if err != nil {
+			// 		entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+			// 		return nil, err
+			// 	}
+			// }
 			entry.Debugf("fetch %d sibling shards for shard %d", len(siblingShards), rshard.ID)
 
 			i := rshard.BlockID
@@ -766,65 +790,105 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(ctx context.Context, result *pb.Mul
 	return nil
 }
 
-func FetchBlock(ctx context.Context, tikvCli *rawkv.Client, blockID int64) (*Block, error) {
-	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_BLOCKS, blockID)))
+//GetBlocks get blocks from sync client service
+func GetBlocks(httpCli *http.Client, syncClientURL string, bindexes []uint64) (map[uint64]*ytab.Block, error) {
+	entry := log.WithFields(log.Fields{Function: "GetBlocks"})
+	strs := make([]string, 0)
+	for _, v := range bindexes {
+		strs = append(strs, fmt.Sprintf("%d", v))
+	}
+	fullURL := fmt.Sprintf("%s/getBlocks?bindexes=%s", syncClientURL, strings.Join(strs, ","))
+	entry.Debugf("fetching blocks by URL: %s", fullURL)
+	request, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
+		entry.WithError(err).Errorf("create request failed: %s", fullURL)
 		return nil, err
 	}
-	block := new(Block)
-	err = block.FillBytes(buf)
+	request.Header.Add("Accept-Encoding", "gzip")
+	resp, err := httpCli.Do(request)
 	if err != nil {
+		entry.WithError(err).Errorf("get checkpoints failed: %s", fullURL)
 		return nil, err
 	}
-	return block, nil
-}
-
-func FetchShard(ctx context.Context, tikvCli *rawkv.Client, shardID int64) (*Shard, error) {
-	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_SHARDS, shardID)))
-	if err != nil {
-		return nil, err
-	}
-	shard := new(Shard)
-	err = shard.FillBytes(buf)
-	if err != nil {
-		return nil, err
-	}
-	return shard, nil
-}
-
-func FetchBlocks(ctx context.Context, tikvCli *rawkv.Client, blockFrom, blockTo int64, limit int64) ([]*Block, error) {
-	entry := log.WithFields(log.Fields{Function: "FetchBlocks", BlockID: blockFrom, "Limit": limit})
-	batchSize := int64(10000)
-	from := fmt.Sprintf("%019d", blockFrom)
-	to := fmt.Sprintf("%019d", blockTo)
-	blocks := make([]*Block, 0)
-	cnt := int64(0)
-	for {
-		lmt := batchSize
-		if cnt+batchSize-limit > 0 {
-			lmt = limit - cnt
-		}
-		_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%s", PFX_BLOCKS, from)), []byte(fmt.Sprintf("%s_%s", PFX_BLOCKS, to)), int(lmt))
+	defer resp.Body.Close()
+	reader := io.Reader(resp.Body)
+	if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
+		gbuf, err := gzip.NewReader(reader)
 		if err != nil {
+			entry.WithError(err).Errorf("decompress response body: %s", fullURL)
 			return nil, err
 		}
-		if len(values) == 0 {
-			break
-		}
-		for _, buf := range values {
-			b := new(Block)
-			err := b.FillBytes(buf)
-			if err != nil {
-				return nil, err
-			}
-			blocks = append(blocks, b)
-		}
-		from = fmt.Sprintf("%019d", blocks[len(blocks)-1].ID+1)
-		cnt += int64(len(values))
+		reader = io.Reader(gbuf)
+		defer gbuf.Close()
 	}
-	entry.Debugf("fetch %d shards", len(blocks))
-	return blocks, nil
+	response := make(map[uint64]*ytab.Block, 0)
+	err = json.NewDecoder(reader).Decode(&response)
+	if err != nil {
+		entry.WithError(err).Errorf("decode blocks failed: %s", fullURL)
+		return nil, err
+	}
+	return response, nil
 }
+
+// func FetchBlock(ctx context.Context, tikvCli *rawkv.Client, blockID int64) (*Block, error) {
+// 	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_BLOCKS, blockID)))
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	block := new(Block)
+// 	err = block.FillBytes(buf)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return block, nil
+// }
+
+// func FetchShard(ctx context.Context, tikvCli *rawkv.Client, shardID int64) (*Shard, error) {
+// 	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_SHARDS, shardID)))
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	shard := new(Shard)
+// 	err = shard.FillBytes(buf)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return shard, nil
+// }
+
+// func FetchBlocks(ctx context.Context, tikvCli *rawkv.Client, blockFrom, blockTo int64, limit int64) ([]*Block, error) {
+// 	entry := log.WithFields(log.Fields{Function: "FetchBlocks", BlockID: blockFrom, "Limit": limit})
+// 	batchSize := int64(10000)
+// 	from := fmt.Sprintf("%019d", blockFrom)
+// 	to := fmt.Sprintf("%019d", blockTo)
+// 	blocks := make([]*Block, 0)
+// 	cnt := int64(0)
+// 	for {
+// 		lmt := batchSize
+// 		if cnt+batchSize-limit > 0 {
+// 			lmt = limit - cnt
+// 		}
+// 		_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%s", PFX_BLOCKS, from)), []byte(fmt.Sprintf("%s_%s", PFX_BLOCKS, to)), int(lmt))
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		if len(values) == 0 {
+// 			break
+// 		}
+// 		for _, buf := range values {
+// 			b := new(Block)
+// 			err := b.FillBytes(buf)
+// 			if err != nil {
+// 				return nil, err
+// 			}
+// 			blocks = append(blocks, b)
+// 		}
+// 		from = fmt.Sprintf("%019d", blocks[len(blocks)-1].ID+1)
+// 		cnt += int64(len(values))
+// 	}
+// 	entry.Debugf("fetch %d shards", len(blocks))
+// 	return blocks, nil
+// }
 
 func FetchNodeShards(ctx context.Context, tikvCli *rawkv.Client, nodeId int32, shardFrom, shardTo int64, limit int64) ([]*Shard, error) {
 	entry := log.WithFields(log.Fields{Function: "FetchNodeShards", MinerID: nodeId, ShardID: shardFrom, "Limit": limit})
@@ -863,22 +927,22 @@ func FetchNodeShards(ctx context.Context, tikvCli *rawkv.Client, nodeId int32, s
 	return shards, nil
 }
 
-func FetchShards(ctx context.Context, tikvCli *rawkv.Client, shardFrom int64, shardTo int64) ([]*Shard, error) {
-	_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardFrom))), []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardTo))), 164)
-	if err != nil {
-		return nil, err
-	}
-	shards := make([]*Shard, 0)
-	for _, buf := range values {
-		s := new(Shard)
-		err := s.FillBytes(buf)
-		if err != nil {
-			return nil, err
-		}
-		shards = append(shards, s)
-	}
-	return shards, nil
-}
+// func FetchShards(ctx context.Context, tikvCli *rawkv.Client, shardFrom int64, shardTo int64) ([]*Shard, error) {
+// 	_, values, err := tikvCli.Scan(ctx, []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardFrom))), []byte(fmt.Sprintf("%s_%s", PFX_SHARDS, fmt.Sprintf("%019d", shardTo))), 164)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	shards := make([]*Shard, 0)
+// 	for _, buf := range values {
+// 		s := new(Shard)
+// 		err := s.FillBytes(buf)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		shards = append(shards, s)
+// 	}
+// 	return shards, nil
+// }
 
 func FetchFirstNodeShard(ctx context.Context, tikvCli *rawkv.Client, nodeId int32) (*Shard, error) {
 	shards, err := FetchNodeShards(ctx, tikvCli, nodeId, 0, 9223372036854775807, 1)
@@ -916,56 +980,83 @@ func FetchLastNodeShard(ctx context.Context, tikvCli *rawkv.Client, nodeId int32
 	return shards[0], nil
 }
 
-func BuildTasks2(ctx context.Context, tikvCli *rawkv.Client, shards []*Shard) ([]*RebuildShard, error) {
-	entry := log.WithFields(log.Fields{Function: "buildTasks"})
-	rebuildShards := make([]*RebuildShard, 0)
-OUTER:
-	for _, shard := range shards {
-		block, err := FetchBlock(ctx, tikvCli, shard.BlockID)
-		if err != nil {
-			entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
-			return nil, err
-		}
-		rshard := new(RebuildShard)
-		rshard.ID = shard.ID
-		rshard.BlockID = shard.BlockID
-		rshard.MinerID = shard.NodeID
-		rshard.VHF = shard.VHF
-		rshard.VNF = block.VNF
-		rshard.SNID = block.SNID
-		if block.AR == -2 {
-			rshard.Type = 0xc258
-			rshard.ParityShardCount = block.VNF
-		} else if block.AR > 0 {
-			rshard.Type = 0x68b3
-			rshard.ParityShardCount = block.VNF - block.AR
-		}
-		siblingShards := block.Shards // FetchShards(ctx, tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
-		if err != nil {
-			entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
-			return nil, err
-		} else {
-			hashs := make([][]byte, 0)
-			nodeIDs := make([]int32, 0)
-			i := rshard.BlockID
-			for _, s := range siblingShards {
-				entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
-				if s.ID != i {
-					entry.WithField(ShardID, shard.ID).Errorf("sibling shard %d not found: %d", i, s.ID)
-					continue OUTER
-				}
-				hashs = append(hashs, s.VHF)
-				nodeIDs = append(nodeIDs, s.NodeID)
-				i++
-			}
-			if len(hashs) != int(rshard.VNF) {
-				entry.WithField(ShardID, shard.ID).WithError(err).Errorf("count of sibling shard is %d, not equal to VNF %d", len(hashs), rshard.VNF)
-				continue
-			}
-			rshard.Hashs = hashs
-			rshard.NodeIDs = nodeIDs
-		}
-		rebuildShards = append(rebuildShards, rshard)
+// func BuildTasks2(ctx context.Context, tikvCli *rawkv.Client, shards []*Shard) ([]*RebuildShard, error) {
+// 	entry := log.WithFields(log.Fields{Function: "buildTasks"})
+// 	rebuildShards := make([]*RebuildShard, 0)
+// OUTER:
+// 	for _, shard := range shards {
+// 		block, err := FetchBlock(ctx, tikvCli, shard.BlockID)
+// 		if err != nil {
+// 			entry.WithField(ShardID, shard.ID).WithError(err).Error("fetching block")
+// 			return nil, err
+// 		}
+// 		rshard := new(RebuildShard)
+// 		rshard.ID = shard.ID
+// 		rshard.BlockID = shard.BlockID
+// 		rshard.MinerID = shard.NodeID
+// 		rshard.VHF = shard.VHF
+// 		rshard.VNF = block.VNF
+// 		rshard.SNID = block.SNID
+// 		if block.AR == -2 {
+// 			rshard.Type = 0xc258
+// 			rshard.ParityShardCount = block.VNF
+// 		} else if block.AR > 0 {
+// 			rshard.Type = 0x68b3
+// 			rshard.ParityShardCount = block.VNF - block.AR
+// 		}
+// 		siblingShards := block.Shards // FetchShards(ctx, tikvCli, rshard.BlockID, rshard.BlockID+int64(rshard.VNF))
+// 		if err != nil {
+// 			entry.WithField(ShardID, rshard.ID).WithError(err).Error("fetching sibling shards failed")
+// 			return nil, err
+// 		} else {
+// 			hashs := make([][]byte, 0)
+// 			nodeIDs := make([]int32, 0)
+// 			i := rshard.BlockID
+// 			for _, s := range siblingShards {
+// 				entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
+// 				if s.ID != i {
+// 					entry.WithField(ShardID, shard.ID).Errorf("sibling shard %d not found: %d", i, s.ID)
+// 					continue OUTER
+// 				}
+// 				hashs = append(hashs, s.VHF)
+// 				nodeIDs = append(nodeIDs, s.NodeID)
+// 				i++
+// 			}
+// 			if len(hashs) != int(rshard.VNF) {
+// 				entry.WithField(ShardID, shard.ID).WithError(err).Errorf("count of sibling shard is %d, not equal to VNF %d", len(hashs), rshard.VNF)
+// 				continue
+// 			}
+// 			rshard.Hashs = hashs
+// 			rshard.NodeIDs = nodeIDs
+// 		}
+// 		rebuildShards = append(rebuildShards, rshard)
+// 	}
+// 	return rebuildShards, nil
+// }
+
+//FindShardMetas get shard metas by ShardRebuildMeta
+func FindShardMeta(ctx context.Context, tikvCli *rawkv.Client, blockID uint64) (*pb.ShardMetaMsg, error) {
+	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("shardmeta_%019d", blockID)))
+	if err != nil {
+		return nil, err
 	}
-	return rebuildShards, nil
+	msg := new(pb.ShardMetaMsg)
+	err = proto.Unmarshal(buf, msg)
+	if err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
+
+func FindNodeShard(ctx context.Context, tikvCli *rawkv.Client, shardID uint64, nodeID uint32) (*pb.ShardMsg, error) {
+	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%d_%019d", PFX_SHARDNODES, nodeID, shardID)))
+	if err != nil {
+		return nil, err
+	}
+	msg := new(pb.ShardMsg)
+	err = proto.Unmarshal(buf, msg)
+	if err != nil {
+		return nil, err
+	}
+	return msg, nil
 }
