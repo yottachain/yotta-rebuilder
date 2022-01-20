@@ -46,59 +46,59 @@ var NoValError = errors.New("value not found")
 // Node instance
 type Node struct {
 	//data node index
-	ID int32 `bson:"_id"`
+	ID int32 `bson:"_id" json:"_id"`
 	//data node ID, generated from PubKey
-	NodeID string `bson:"nodeid"`
+	NodeID string `bson:"nodeid" json:"nodeid"`
 	//public key of data node
-	PubKey string `bson:"pubkey"`
+	PubKey string `bson:"pubkey" json:"pubkey"`
 	//owner account of this miner
-	Owner string `bson:"owner"`
+	Owner string `bson:"owner" json:"owner"`
 	//profit account of this miner
-	ProfitAcc string `bson:"profitAcc"`
+	ProfitAcc string `bson:"profitAcc" json:"profitAcc"`
 	//ID of associated miner pool
-	PoolID string `bson:"poolID"`
+	PoolID string `bson:"poolID" json:"poolID"`
 	//Owner of associated miner pool
-	PoolOwner string `bson:"poolOwner"`
+	PoolOwner string `bson:"poolOwner" json:"poolOwner"`
 	//quota allocated by associated miner pool
-	Quota int64 `bson:"quota"`
+	Quota int64 `bson:"quota" json:"quota"`
 	//listening addresses of data node
-	Addrs []string `bson:"addrs"`
+	Addrs []string `bson:"addrs" json:"addrs"`
 	//CPU usage of data node
-	CPU int32 `bson:"cpu"`
+	CPU int32 `bson:"cpu" json:"cpu"`
 	//memory usage of data node
-	Memory int32 `bson:"memory"`
+	Memory int32 `bson:"memory" json:"memory"`
 	//bandwidth usage of data node
-	Bandwidth int32 `bson:"bandwidth"`
+	Bandwidth int32 `bson:"bandwidth" json:"bandwidth"`
 	//max space of data node
-	MaxDataSpace int64 `bson:"maxDataSpace"`
+	MaxDataSpace int64 `bson:"maxDataSpace" json:"maxDataSpace"`
 	//space assigned to YTFS
-	AssignedSpace int64 `bson:"assignedSpace"`
+	AssignedSpace int64 `bson:"assignedSpace" json:"assignedSpace"`
 	//pre-allocated space of data node
-	ProductiveSpace int64 `bson:"productiveSpace"`
+	ProductiveSpace int64 `bson:"productiveSpace" json:"productiveSpace"`
 	//used space of data node
-	UsedSpace int64 `bson:"usedSpace"`
+	UsedSpace int64 `bson:"usedSpace" json:"usedSpace"`
 	//used spaces on each SN
-	Uspaces map[string]int64 `bson:"uspaces"`
+	Uspaces map[string]int64 `bson:"uspaces" json:"uspaces"`
 	//weight for allocate data node
-	Weight float64 `bson:"weight"`
+	Weight float64 `bson:"weight" json:"weight"`
 	//Is node valid
-	Valid int32 `bson:"valid"`
+	Valid int32 `bson:"valid" json:"valid"`
 	//Is relay node
-	Relay int32 `bson:"relay"`
+	Relay int32 `bson:"relay" json:"relay"`
 	//status code: 0 - registered 1 - active
-	Status int32 `bson:"status"`
+	Status int32 `bson:"status" json:"status"`
 	//timestamp of status updating operation
-	Timestamp int64 `bson:"timestamp"`
+	Timestamp int64 `bson:"timestamp" json:"timestamp"`
 	//version number of miner
-	Version int32 `bson:"version"`
+	Version int32 `bson:"version" json:"version"`
 	//Rebuilding if node is under rebuilding
-	Rebuilding int32 `bson:"rebuilding"`
+	Rebuilding int32 `bson:"rebuilding" json:"rebuilding"`
 	//RealSpace real space of miner
-	RealSpace int64 `bson:"realSpace"`
+	RealSpace int64 `bson:"realSpace" json:"realSpace"`
 	//Tx
-	Tx int64 `bson:"tx"`
+	Tx int64 `bson:"tx" json:"tx"`
 	//Rx
-	Rx int64 `bson:"rx"`
+	Rx int64 `bson:"rx" json:"rx"`
 	//Ext
 	Ext string `bson:"-"`
 	//ErrorCount

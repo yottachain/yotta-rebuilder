@@ -60,6 +60,10 @@ func main0() {
 		if err != nil {
 			panic(err)
 		}
+		if meta.Id == 0 {
+			fmt.Printf(fmt.Sprintf("block %d not found in tikv\n", block.ID))
+			continue
+		}
 		fmt.Printf("fetch block %d in tikv,  VNF: %d, AR: %d, BIndex: %d, Offset: %d\n", meta.Id, meta.Vnf, meta.Ar, meta.Bindex, meta.Offset)
 		//根据反查到的bindex去数组文件查询block数据
 		bm, err := ytrebuilder.GetBlocks(httpCli, syncURL, []uint64{meta.Bindex})

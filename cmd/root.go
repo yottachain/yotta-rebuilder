@@ -48,6 +48,7 @@ var rootCmd = &cobra.Command{
 		}
 		rebuilder.Start(ctx)
 		rebuilder.TrackingStat(ctx)
+		go rebuilder.TrackingMiners(ctx)
 		rebuilder.TrackingCheckPoints(ctx)
 		lis, err := net.Listen("tcp", config.BindAddr)
 		if err != nil {
