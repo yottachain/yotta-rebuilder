@@ -775,9 +775,11 @@ OUTER:
 		//将组装好的一个重建任务加入任务包
 		tasks.Tasklist = append(tasks.Tasklist, btask)
 	}
-	//entry.Debugf("append rebuild task for miner %d: %s", minerID, hex.EncodeToString(bytes.Join(tasks.Tasklist, []byte(""))))
+	//设置超时时间
 	tasks.ExpiredTime = expiredTime
+	//设置分片所属原矿机ID
 	tasks.SrcNodeID = minerID
+	//设置超时时间（相对时间，单位为秒）
 	tasks.ExpiredTimeGap = int32(rebuilder.Params.RebuildShardExpiredTime)
 	entry.WithField(MinerID, minerID).Debugf("length of task list is %d, expired time is %d, total time: %dms", len(tasks.Tasklist), tasks.ExpiredTime, (time.Now().UnixNano()-startTime)/1000000)
 	return tasks, nil
