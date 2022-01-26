@@ -694,41 +694,53 @@ OUTER:
 		entry.Warn(ErrNoTaskAlloc)
 		return nil, ErrNoTaskAlloc
 	}
+	//任务超时时间（绝对时间），为当前时间加上预设的任务超时时间，单位是秒
 	expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
+	//一个任务包，多个分片的重建任务均在该任务包内
 	tasks := new(pb.MultiTaskDescription)
+	//rbshards为RebuildShard结构体数组
 	for _, shard := range rbshards {
 		entry.Debugf("fetch shard %d: nodeId %d/%d", shard.ID, shard.MinerID, shard.MinerID2)
+		//被重建分片的全部关联分片（包括自身）的MD5哈希（仅当status=2且分片类型为0x68b3，即LRC分片时才需要该值，否则为空）
 		hashs := shard.Hashs
+		//所有关联分片所在矿机的P2P地址（只使用NodeID，没有NodeID2的，为和旧代码兼容）
 		locations := make([]*pb.P2PLocation, 0)
 		for _, id := range shard.NodeIDs {
 			n := rebuilder.NodeManager.GetNode(id)
 			if n == nil {
+				//如果矿机不存在则制造一个假地址
 				locations = append(locations, &pb.P2PLocation{NodeId: "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r", Addrs: []string{"/ip4/127.0.0.1/tcp/59999"}})
 			} else {
 				locations = append(locations, &pb.P2PLocation{NodeId: n.NodeID, Addrs: n.Addrs})
 			}
 		}
+		//关联分片数不正确则跳过该分片的重建
 		if (shard.Type == 0x68b3 && len(locations) < int(shard.VNF)) || (shard.Type == 0xc258 && len(locations) == 0) {
 			entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Warnf("sibling shards are not enough, only %d shards", len(hashs))
 			continue
 		}
 		var b []byte
 		var err error
-		if shard.Type == 0x68b3 {
-			//LRC
+		if shard.Type == 0x68b3 { //LRC2重建部分
 			task := new(pb.TaskDescription)
+			//拼接任务ID
 			task.Id = append(Int64ToBytes(shard.ID), Uint16ToBytes(uint16(shard.SNID))...)
+			//关联分片哈希
 			task.Hashs = hashs
+			//status=3且被重建分片没有nodeID2时该值为1，有nodeID2时为2（即副本数）；status=2时若分片类型为0x68b3则该值为分片所属block的VNF减去AR，分片类型为0xc258时该值为分片所属block的VNF
 			task.ParityShardCount = shard.ParityShardCount
+			//分片在block中的索引值
 			task.RecoverId = int32(shard.ID - shard.BlockID)
+			//所有关联分片所在矿机的P2P地址
 			task.Locations = locations
+			//如果存在nodeID2，即LRC2重建类型
 			if shard.MinerID2 != 0 {
-				if minerID == shard.MinerID {
+				if minerID == shard.MinerID { //如果被重建分片的NodeID为被重建矿机，则使用NodeID2作为重建备份节点
 					backNode := rebuilder.NodeManager.GetNode(shard.MinerID2)
 					if backNode != nil {
 						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
 					}
-				} else if minerID == shard.MinerID2 {
+				} else if minerID == shard.MinerID2 { //如果被重建分片的NodeID2为被重建矿机，则使用NodeID作为重建备份节点
 					backNode := rebuilder.NodeManager.GetNode(shard.MinerID)
 					if backNode != nil {
 						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
@@ -737,24 +749,30 @@ OUTER:
 					entry.Errorf("neither MinerID nor MinerID2 match rebuilder ID for shard %d", shard.ID)
 				}
 			}
+			//序列化任务为字节数组
 			b, err = proto.Marshal(task)
 			if err != nil {
 				entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).WithError(err).Errorf("marshaling LRC task: %d", shard.ID)
 				continue
 			}
-		} else if shard.Type == 0xc258 {
-			//replication
+		} else if shard.Type == 0xc258 { //多副本重建部分
 			task := new(pb.TaskDescriptionCP)
+			//拼接任务ID
 			task.Id = append(Int64ToBytes(shard.ID), Uint16ToBytes(uint16(shard.SNID))...)
+			//被重建分片的MD5哈希
 			task.DataHash = shard.VHF
+			//被重建分片的全部副本所在Node的地址列表
 			task.Locations = locations
+			//序列化任务为字节数组
 			b, err = proto.Marshal(task)
 			if err != nil {
 				entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).WithError(err).Errorf("marshaling replication task: %d", shard.ID)
 				continue
 			}
 		}
+		//将分片类型加到重建数据前面
 		btask := append(Uint16ToBytes(uint16(shard.Type)), b...)
+		//将组装好的一个重建任务加入任务包
 		tasks.Tasklist = append(tasks.Tasklist, btask)
 	}
 	//entry.Debugf("append rebuild task for miner %d: %s", minerID, hex.EncodeToString(bytes.Join(tasks.Tasklist, []byte(""))))
