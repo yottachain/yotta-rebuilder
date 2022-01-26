@@ -29,6 +29,7 @@ import (
 
 //Int64Max max value of int64
 //const Int64Max int64 = 9223372036854775807
+var ErrNoTaskAlloc error = errors.New("no tasks can be allocated")
 
 //Rebuilder rebuilder
 type Rebuilder struct {
@@ -43,6 +44,7 @@ type Rebuilder struct {
 	taskAllocator     map[int32]*TaskChan
 	checkPoints       map[int32]int64
 	lock2             sync.RWMutex
+	taskSender        *TaskSender
 }
 
 //New create a new rebuilder instance
@@ -66,7 +68,7 @@ func New(ctx context.Context, pdURLs []string, rebuilderDBURL string, mqconf *Au
 	}
 	entry.Info("node manager created")
 	pool := grpool.NewPool(conf.SyncPoolLength, conf.SyncQueueLength)
-	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, Params: conf, httpCli: &http.Client{}, taskAllocator: make(map[int32]*TaskChan), checkPoints: make(map[int32]int64)}
+	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, Params: conf, httpCli: &http.Client{}, taskAllocator: make(map[int32]*TaskChan), checkPoints: make(map[int32]int64), taskSender: NewTaskSender()}
 	callback := func(msg *msg.Message) {
 		if msg.GetType() == auramq.BROADCAST {
 			if msg.GetDestination() == mqconf.MinerSyncTopic {
@@ -171,11 +173,16 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 		}
 		rebuilder.NodeManager.UpdateNode(node)
 	}
-	if node.Rebuilding > 8000 || node.Status > 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	// if node.Rebuilding > 8000 || node.Status > 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	// 	entry.Debug("can not allocate rebuild task to current miner")
+	// 	return nil
+	// }
+	// rebuilder.SendTask(ctx, node)
+	if node.Rebuilding > 1 || node.Status != 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		entry.Debug("can not allocate rebuild task to current miner")
 		return nil
 	}
-	rebuilder.SendTask(ctx, node)
+	rebuilder.taskSender.AddToQueue(node)
 	return nil
 }
 
@@ -629,10 +636,10 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 	entry.Debugf("fetch rebuilding node %d", rbNode.ID)
 	startTime := time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
-	if rbNode.Rebuilding > 8000 || rbNode.Status > 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
-		err := fmt.Errorf("no tasks can be allocated to miner %d", id)
-		entry.WithError(err).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
-		return nil, err
+	if rbNode.Rebuilding > 1 || rbNode.Status != 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+		//err := fmt.Errorf("no tasks can be allocated to miner %d", id)
+		entry.WithError(ErrNoTaskAlloc).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
+		return nil, ErrNoTaskAlloc
 	}
 	rbshards := make([]*RebuildShard, 0)
 	i := 0
@@ -683,9 +690,9 @@ OUTER:
 	}
 	rebuilder.lock.RUnlock()
 	if len(rbshards) == 0 {
-		err := errors.New("no tasks can be allocated")
-		entry.Warn(err)
-		return nil, err
+		//err := errors.New("no tasks can be allocated")
+		entry.Warn(ErrNoTaskAlloc)
+		return nil, ErrNoTaskAlloc
 	}
 	expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
 	tasks := new(pb.MultiTaskDescription)

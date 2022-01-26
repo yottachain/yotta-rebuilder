@@ -50,6 +50,7 @@ var rootCmd = &cobra.Command{
 		rebuilder.TrackingStat(ctx)
 		go rebuilder.TrackingMiners(ctx)
 		rebuilder.TrackingCheckPoints(ctx)
+		go rebuilder.SendTasks(ctx)
 		lis, err := net.Listen("tcp", config.BindAddr)
 		if err != nil {
 			log.Fatalf("failed to listen address %s: %s\n", config.BindAddr, err)

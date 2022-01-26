@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/aurawing/auramq v0.0.2-0.20200521072017-845ffa488ac8
+	github.com/enriquebris/goconcurrentqueue v0.6.0
 	github.com/golang/protobuf v1.4.1
 	github.com/ivpusic/grpool v1.0.0
 	github.com/lestrrat-go/file-rotatelogs v2.3.0+incompatible
