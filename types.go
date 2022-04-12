@@ -262,6 +262,11 @@ type RebuildShard struct {
 	//ErrCount         int32  `bson:"errCount"`
 }
 
+type NodePair struct {
+	NodeID1 int32
+	NodeID2 int32
+}
+
 type TaskChan struct {
 	ch    chan *RebuildShard
 	close bool

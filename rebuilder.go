@@ -30,6 +30,7 @@ import (
 //Int64Max max value of int64
 //const Int64Max int64 = 9223372036854775807
 var ErrNoTaskAlloc error = errors.New("no tasks can be allocated")
+var ErrInvalidNode error = errors.New("invalid rebuilding node")
 
 //Rebuilder rebuilder
 type Rebuilder struct {
@@ -128,15 +129,18 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 			return err
 		}
 		cond := bson.M{"nodeid": node.NodeID, "pubkey": node.PubKey, "owner": node.Owner, "profitAcc": node.ProfitAcc, "poolID": node.PoolID, "poolOwner": node.PoolOwner, "quota": node.Quota, "addrs": node.Addrs, "cpu": node.CPU, "memory": node.Memory, "bandwidth": node.Bandwidth, "maxDataSpace": node.MaxDataSpace, "assignedSpace": node.AssignedSpace, "productiveSpace": node.ProductiveSpace, "usedSpace": node.UsedSpace, "weight": node.Weight, "valid": node.Valid, "relay": node.Relay, "status": node.Status, "timestamp": node.Timestamp, "version": node.Version, "rebuilding": node.Rebuilding, "realSpace": node.RealSpace, "tx": node.Tx, "rx": node.Rx, "other": otherDoc}
+		tcond := bson.M{"$set": cond}
 		for k, v := range node.Uspaces {
 			cond[fmt.Sprintf("uspaces.%s", k)] = v
 		}
 		if (node.Status == 2 || node.Status == 3) && oldNode.Status == 1 {
 			cond["tasktimestamp"] = time.Now().Unix()
+		} else if node.Status == 1 {
+			tcond["$unset"] = bson.M{"tasktimestamp": true}
 		}
 		opts := new(options.FindOneAndUpdateOptions)
 		opts = opts.SetReturnDocument(options.After)
-		result := collection.FindOneAndUpdate(ctx, bson.M{"_id": node.ID}, bson.M{"$set": cond}, opts)
+		result := collection.FindOneAndUpdate(ctx, bson.M{"_id": node.ID}, tcond, opts)
 		updatedNode := new(Node)
 		err = result.Decode(updatedNode)
 		if err != nil {
@@ -147,9 +151,9 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 		if updatedNode.Status == 99 && oldNode.Status > 1 && oldNode.Status < 99 {
 			//重建完毕，状态改为3，删除旧任务
 			collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
-			_, err = collectionRM.UpdateOne(ctx, bson.M{"_id": updatedNode.ID}, bson.M{"$set": bson.M{"from": 0, "to": 0, "status": 99}})
+			_, err = collectionRM.DeleteOne(ctx, bson.M{"_id": updatedNode.ID})
 			if err != nil {
-				entry.WithError(err).Error("update rebuild miner status to 99")
+				entry.WithError(err).Error("delete rebuild miner with status 99")
 			} else {
 				entry.Info("all rebuild tasks finished")
 			}
@@ -289,7 +293,7 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 			miner.ID = node.ID
 			miner.Segs = segs
 			miner.Grids = grids
-			if node.Round == 0 || node.Status == 3 {
+			if node.Round == 0 { //|| node.Status == 3 {
 				miner.Status = 3
 			} else {
 				miner.Status = 2
@@ -330,7 +334,9 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 				continue
 			}
 			if !miner.FinishBuild {
+				rebuilder.lock.RLock()
 				_, ok := rebuilder.taskAllocator[miner.ID]
+				rebuilder.lock.RUnlock()
 				if !ok {
 					rebuilder.lock.Lock()
 					if _, ok := rebuilder.taskAllocator[miner.ID]; !ok {
@@ -371,7 +377,7 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 						if err != nil {
 							entry.WithField(MinerID, miner.ID).WithError(err).Error("delete rebuild miner")
 						}
-						_, err = collection.UpdateOne(ctx, bson.M{"_id": miner.ID}, bson.M{"$set": bson.M{"tasktimestamp": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}})
+						_, err = collection.UpdateOne(ctx, bson.M{"_id": miner.ID, "status": bson.M{"$ne": 1}}, bson.M{"$set": bson.M{"tasktimestamp": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}})
 						if err != nil {
 							entry.WithField(MinerID, miner.ID).WithError(err).Error("restart rebuild miner")
 						}
@@ -462,6 +468,7 @@ func (rebuilder *Rebuilder) Processing(ctx context.Context, miner *RebuildMiner)
 	//TODO: 全部分片发送完成
 	rebuilder.lock.RLock()
 	if _, ok := rebuilder.taskAllocator[miner.ID]; ok {
+		entry.Info("close task chan")
 		close(rebuilder.taskAllocator[miner.ID].ch)
 	}
 	rebuilder.lock.RUnlock()
@@ -508,6 +515,7 @@ OUTER:
 			// 	return nil, err
 			// }
 			entry.Debugf("fetch block %d for shard %d", block.ID, shard.ID)
+			rshard.BlockID = int64(block.ID)
 			if block.AR == -2 {
 				rshard.Type = 0xc258
 				rshard.ParityShardCount = int32(block.VNF)
@@ -555,7 +563,7 @@ OUTER:
 				needHash = true
 			}
 			for _, s := range siblingShards {
-				entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d", i)
+				entry.WithField(ShardID, shard.ID).Debugf("decode sibling shard info %d: %d", i, s.ID)
 				if s.ID != i {
 					entry.WithField(ShardID, shard.ID).Errorf("sibling shard %d not found: %d", i, s.ID)
 					continue OUTER
@@ -563,10 +571,18 @@ OUTER:
 				if needHash {
 					hashs = append(hashs, s.VHF)
 				}
-				nodeIDs = append(nodeIDs, s.NodeID)
+				node1 := rebuilder.NodeManager.GetNode(s.NodeID)
+				node2 := rebuilder.NodeManager.GetNode(s.NodeID2)
+				if node1 != nil && node1.Timestamp > time.Now().Unix()-600 && node1.Status == 1 && node1.Valid == 1 {
+					nodeIDs = append(nodeIDs, s.NodeID)
+				} else if node2 != nil && node2.Timestamp > time.Now().Unix()-600 && node2.Status == 1 && node2.Valid == 1 {
+					nodeIDs = append(nodeIDs, s.NodeID2)
+				} else {
+					nodeIDs = append(nodeIDs, s.NodeID)
+				}
 				i++
 			}
-			if len(hashs) != int(rshard.VNF) {
+			if len(nodeIDs) != int(rshard.VNF) {
 				entry.WithField(ShardID, shard.ID).WithError(err).Errorf("count of sibling shard is %d, not equal to VNF %d", len(hashs), rshard.VNF)
 				continue
 			}
@@ -638,8 +654,8 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
 	if rbNode.Rebuilding > 1 || rbNode.Status != 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		//err := fmt.Errorf("no tasks can be allocated to miner %d", id)
-		entry.WithError(ErrNoTaskAlloc).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
-		return nil, ErrNoTaskAlloc
+		entry.WithError(ErrInvalidNode).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
+		return nil, ErrInvalidNode
 	}
 	rbshards := make([]*RebuildShard, 0)
 	i := 0
@@ -815,6 +831,20 @@ func (rebuilder *Rebuilder) UpdateTaskStatus(ctx context.Context, result *pb.Mul
 
 	}
 	return nil
+}
+
+func GetBlocksRetries(httpCli *http.Client, syncClientURL string, bindexes []uint64, retries int) (map[uint64]*ytab.Block, error) {
+	//entry := log.WithFields(log.Fields{Function: "GetBlocksRetries"})
+	blocks, err := GetBlocks(httpCli, syncClientURL, bindexes)
+	if err != nil {
+		if retries == 0 {
+			return blocks, err
+		} else {
+			return GetBlocksRetries(httpCli, syncClientURL, bindexes, retries-1)
+		}
+	} else {
+		return blocks, err
+	}
 }
 
 //GetBlocks get blocks from sync client service

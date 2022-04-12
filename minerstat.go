@@ -296,6 +296,9 @@ func (rebuilder *Rebuilder) TrackingMiners(ctx context.Context) {
 							for k, v := range item.Uspaces {
 								cond[fmt.Sprintf("uspaces.%s", k)] = v
 							}
+							if (item.Status == 2 || item.Status == 3) && oldNode.Status == 1 {
+								cond["tasktimestamp"] = time.Now().Unix()
+							}
 							_, err = collectionMiner.UpdateOne(ctx, bson.M{"_id": item.ID}, bson.M{"$set": cond})
 							if err != nil {
 								entry.WithError(err).Warnf("updating record of miner %d", item.ID)

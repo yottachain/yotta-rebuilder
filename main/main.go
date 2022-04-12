@@ -201,7 +201,7 @@ func main1() {
 				return
 			}
 			for _, s := range shards {
-				fmt.Printf("ID: %d, VHF: %s, BlockID: %d, NodeID: %d, NodeID2: %d\n", s.ID, base64.StdEncoding.EncodeToString(s.VHF), s.ID-int64(s.Offset), s.NodeID, s.NodeID2)
+				fmt.Printf("ID: %d, VHF: %s, BlockID: %d, NodeID: %d, NodeID2: %d, Offset: %d\n", s.ID, base64.StdEncoding.EncodeToString(s.VHF), s.ID-int64(s.Offset), s.NodeID, s.NodeID2, s.Offset)
 				shardFrom = s.ID + 1
 			}
 			buf := bufio.NewReader(os.Stdin)
