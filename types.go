@@ -247,17 +247,17 @@ type RebuildMiner struct {
 
 //RebuildShard shard which is ready to be rebuilt
 type RebuildShard struct {
-	ID               int64    `bson:"_id"`
-	VHF              []byte   `bson:"VHF"`
-	MinerID          int32    `bson:"minerID"`
-	BlockID          int64    `bson:"blockID"`
-	Type             int32    `bson:"type"`
-	VNF              int32    `bson:"VNF"`
-	ParityShardCount int32    `bson:"parityShardCount"`
-	SNID             int32    `bson:"snID"`
-	Hashs            [][]byte `json:"h"`
-	NodeIDs          []int32  `json:"n"`
-	MinerID2         int32    `bson:"minerID2"`
+	ID               int64       `bson:"_id"`
+	VHF              []byte      `bson:"VHF"`
+	MinerID          int32       `bson:"minerID"`
+	BlockID          int64       `bson:"blockID"`
+	Type             int32       `bson:"type"`
+	VNF              int32       `bson:"VNF"`
+	ParityShardCount int32       `bson:"parityShardCount"`
+	SNID             int32       `bson:"snID"`
+	Hashs            [][]byte    `json:"h"`
+	NodeIDs          []*NodePair `json:"n"`
+	MinerID2         int32       `bson:"minerID2"`
 	//Timestamp        int64  `bson:"timestamp"`
 	//ErrCount         int32  `bson:"errCount"`
 }

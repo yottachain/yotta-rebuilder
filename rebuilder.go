@@ -541,7 +541,7 @@ OUTER:
 		}
 		var siblingShards []*Shard
 		hashs := make([][]byte, 0)
-		nodeIDs := make([]int32, 0)
+		nodeIDs := make([]*NodePair, 0)
 		if miner.Status == 2 { //|| (miner.Status == 3 && rshard.Type == 0xc258 && rshard.ParityShardCount > 2) {
 			for i, s := range block.Shards {
 				siblingShards = append(siblingShards, &Shard{ID: int64(block.ID) + int64(i), VHF: s.VHF, BIndex: shard.BIndex, Offset: uint8(i), NodeID: int32(s.NodeID), NodeID2: int32(s.NodeID2)})
@@ -571,15 +571,16 @@ OUTER:
 				if needHash {
 					hashs = append(hashs, s.VHF)
 				}
-				node1 := rebuilder.NodeManager.GetNode(s.NodeID)
-				node2 := rebuilder.NodeManager.GetNode(s.NodeID2)
-				if node1 != nil && node1.Timestamp > time.Now().Unix()-600 && node1.Status == 1 && node1.Valid == 1 {
-					nodeIDs = append(nodeIDs, s.NodeID)
-				} else if node2 != nil && node2.Timestamp > time.Now().Unix()-600 && node2.Status == 1 && node2.Valid == 1 {
-					nodeIDs = append(nodeIDs, s.NodeID2)
-				} else {
-					nodeIDs = append(nodeIDs, s.NodeID)
-				}
+				nodeIDs = append(nodeIDs, &NodePair{s.NodeID, s.NodeID2})
+				// node1 := rebuilder.NodeManager.GetNode(s.NodeID)
+				// node2 := rebuilder.NodeManager.GetNode(s.NodeID2)
+				// if node1 != nil && node1.Timestamp > time.Now().Unix()-600 && node1.Status == 1 && node1.Valid == 1 {
+				// 	nodeIDs = append(nodeIDs, &NodePair{s.NodeID, s.NodeID2})
+				// } else if node2 != nil && node2.Timestamp > time.Now().Unix()-600 && node2.Status == 1 && node2.Valid == 1 {
+				// 	nodeIDs = append(nodeIDs, s.NodeID2)
+				// } else {
+				// 	nodeIDs = append(nodeIDs, s.NodeID)
+				// }
 				i++
 			}
 			if len(nodeIDs) != int(rshard.VNF) {
@@ -593,16 +594,17 @@ OUTER:
 			if miner.ID == shard.NodeID {
 				if shard.NodeID2 != 0 {
 					//hashs = append(hashs, shard.VHF)
-					nodeIDs = append(nodeIDs, shard.NodeID2)
+					nodeIDs = append(nodeIDs, &NodePair{shard.NodeID2, 0})
 				}
-				nodeIDs = append(nodeIDs, shard.NodeID)
+				nodeIDs = append(nodeIDs, &NodePair{shard.NodeID, 0})
 			} else if miner.ID == shard.NodeID2 {
-				nodeIDs = append(nodeIDs, shard.NodeID)
+				nodeIDs = append(nodeIDs, &NodePair{shard.NodeID, 0})
 				if shard.NodeID2 != 0 {
 					//hashs = append(hashs, shard.VHF)
-					nodeIDs = append(nodeIDs, shard.NodeID2)
+					nodeIDs = append(nodeIDs, &NodePair{shard.NodeID2, 0})
 				}
 			}
+			//nodeIDs = append(nodeIDs, &NodePair{shard.NodeID, shard.NodeID2})
 			rshard.Hashs = hashs
 			rshard.NodeIDs = nodeIDs
 		}
@@ -721,14 +723,29 @@ OUTER:
 		hashs := shard.Hashs
 		//所有关联分片所在矿机的P2P地址（只使用NodeID，没有NodeID2的，为和旧代码兼容）
 		locations := make([]*pb.P2PLocation, 0)
-		for _, id := range shard.NodeIDs {
-			n := rebuilder.NodeManager.GetNode(id)
-			if n == nil {
+		for idx, id := range shard.NodeIDs {
+			n1 := rebuilder.NodeManager.GetNode(id.NodeID1)
+			n2 := rebuilder.NodeManager.GetNode(id.NodeID2)
+			loc := new(pb.P2PLocation)
+			if n1 == nil {
 				//如果矿机不存在则制造一个假地址
-				locations = append(locations, &pb.P2PLocation{NodeId: "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r", Addrs: []string{"/ip4/127.0.0.1/tcp/59999"}})
+				entry.Debugf("invalid node1 for shard %d/%d: nodeId %d", shard.ID, idx, id.NodeID1)
+				loc.NodeId = "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r"
+				loc.Addrs = []string{"/ip4/127.0.0.1/tcp/59999"}
 			} else {
-				locations = append(locations, &pb.P2PLocation{NodeId: n.NodeID, Addrs: n.Addrs})
+				loc.NodeId = n1.NodeID
+				loc.Addrs = n1.Addrs
 			}
+			if n2 == nil {
+				//如果矿机不存在则制造一个假地址
+				entry.Debugf("invalid node2 for shard %d/%d: nodeId %d", shard.ID, idx, id.NodeID2)
+				loc.NodeId2 = "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r"
+				loc.Addrs2 = []string{"/ip4/127.0.0.1/tcp/59999"}
+			} else {
+				loc.NodeId2 = n2.NodeID
+				loc.Addrs2 = n2.Addrs
+			}
+			locations = append(locations, loc)
 		}
 		//关联分片数不正确则跳过该分片的重建
 		if (shard.Type == 0x68b3 && len(locations) < int(shard.VNF)) || (shard.Type == 0xc258 && len(locations) == 0) {
