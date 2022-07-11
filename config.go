@@ -8,6 +8,13 @@ const (
 	//RebuilderDBURLField Field name of rebuilderdb-url config
 	RebuilderDBURLField = "rebuilderdb-url"
 
+	//ESURLsField Field name of esconfig.urls config
+	ESURLsField = "esconfig.urls"
+	//ESUserNameField Field name of esconfig.username config
+	ESUserNameField = "esconfig.username"
+	//ESPasswordField Field name of esconfig.password config
+	ESPasswordField = "esconfig.password"
+
 	//AuramqSubscriberBufferSizeField Field name of auramq.subscriber-buffer-size
 	AuramqSubscriberBufferSizeField = "auramq.subscriber-buffer-size"
 	//AuramqPingWaitField Field name of auramq.ping-wait
@@ -82,10 +89,17 @@ type Config struct {
 	BindAddr       string              `mapstructure:"bind-addr"`
 	PDURLs         []string            `mapstructure:"pd-urls"`
 	RebuilderDBURL string              `mapstructure:"rebuilderdb-url"`
+	ESConfig       *ESConfig           `mapstructure:"esconfig"`
 	AuraMQ         *AuraMQConfig       `mapstructure:"auramq"`
 	Compensation   *CompensationConfig `mapstructure:"compensation"`
 	Logger         *LogConfig          `mapstructure:"logger"`
 	MiscConfig     *MiscConfig         `mapstructure:"misc"`
+}
+
+type ESConfig struct {
+	URLs     []string `mapstructure:"urls"`
+	UserName string   `mapstructure:"username"`
+	Password string   `mapstructure:"password"`
 }
 
 //AuraMQConfig auramq configuration

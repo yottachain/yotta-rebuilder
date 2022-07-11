@@ -107,7 +107,7 @@ func main0() {
 			}
 			//如果nodeId不为0，再和tikv中对应的ShardMsg数据对比
 			if shardAB.NodeID != 0 {
-				s1, err := ytrebuilder.FindNodeShard(context.Background(), tikvCli, uint64(shard.ID), shardAB.NodeID)
+				s1, err := ytrebuilder.FindNodeShard2(context.Background(), tikvCli, uint64(shard.ID), shardAB.NodeID)
 				if err != nil || s1 == nil {
 					fmt.Printf("	shard %d not found in miner1 %d: %s\n", shard.ID, shardAB.NodeID, err.Error())
 					ok = false
@@ -120,7 +120,7 @@ func main0() {
 			}
 			//如果nodeId2不为0，再和tikv中对应的ShardMsg数据对比
 			if shardAB.NodeID2 != 0 {
-				s2, err := ytrebuilder.FindNodeShard(context.Background(), tikvCli, uint64(shard.ID), shardAB.NodeID2)
+				s2, err := ytrebuilder.FindNodeShard2(context.Background(), tikvCli, uint64(shard.ID), shardAB.NodeID2)
 				if err != nil || s2 == nil {
 					fmt.Printf("	shard %d not found in miner2 %d: %s\n", shard.ID, shardAB.NodeID2, err.Error())
 					ok = false
@@ -160,18 +160,22 @@ func main1() {
 	// 		panic(err)
 	// 	}
 	// 	fmt.Printf("ID: %d, VNF: %d, AR: %d, SNID: %d, %d shards\n", block.ID, block.VNF, block.AR, block.SNID, len(block.Shards))
-	// } else if os.Args[2] == "shard" {
-	// 	shardID, err := strconv.ParseInt(os.Args[3], 10, 64)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	shard, err := ytrebuilder.FetchShard(context.TODO(), tikvCli, shardID)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	fmt.Printf("ID: %d, VHF: %s, NodeID: %d, BlockID: %d, NodeID2: %d\n", shard.ID, base64.StdEncoding.EncodeToString(shard.VHF), shard.NodeID, shard.BlockID, shard.NodeID2)
 	// } else
-	if os.Args[2] == "nodeshard" {
+	if os.Args[2] == "shardmeta" {
+		shardID, err := strconv.ParseInt(os.Args[3], 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		shard, err := ytrebuilder.FetchShardMeta(context.TODO(), tikvCli, shardID)
+		if err != nil {
+			panic(err)
+		}
+		if shard != nil {
+			fmt.Printf("ID: %d, BIndex: %d, Offset: %d, VNF: %d, AR: %d, Timestamp: %d\n", shard.Id, shard.Bindex, shard.Offset, shard.Vnf, shard.Ar, shard.Timestamp)
+		} else {
+			fmt.Println("no value")
+		}
+	} else if os.Args[2] == "nodeshard" {
 		shardID, err := strconv.ParseInt(os.Args[3], 10, 64)
 		if err != nil {
 			panic(err)

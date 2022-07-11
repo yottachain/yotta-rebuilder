@@ -42,7 +42,7 @@ var rootCmd = &cobra.Command{
 		// }
 		initLog(config)
 		ctx := context.Background()
-		rebuilder, err := ytrebuilder.New(ctx, config.PDURLs, config.RebuilderDBURL, config.AuraMQ, config.Compensation, config.MiscConfig)
+		rebuilder, err := ytrebuilder.New(ctx, config.PDURLs, config.RebuilderDBURL, config.ESConfig.URLs, config.ESConfig.UserName, config.ESConfig.Password, config.AuraMQ, config.Compensation, config.MiscConfig)
 		if err != nil {
 			panic(fmt.Sprintf("fatal error when starting rebuilder service: %s\n", err))
 		}
@@ -51,6 +51,7 @@ var rootCmd = &cobra.Command{
 		go rebuilder.TrackingMiners(ctx)
 		rebuilder.TrackingCheckPoints(ctx)
 		go rebuilder.SendTasks(ctx)
+		go rebuilder.SendSCTasks(ctx)
 		lis, err := net.Listen("tcp", config.BindAddr)
 		if err != nil {
 			log.Fatalf("failed to listen address %s: %s\n", config.BindAddr, err)
@@ -163,6 +164,13 @@ var (
 	//DefaultRebuilderDBURL default value of RebuilderDBURL
 	DefaultRebuilderDBURL string = "mongodb://127.0.0.1:27017/?connect=direct"
 
+	//DefaultESConfigURLs default value of ESConfigURLs
+	DefaultESConfigURLs []string = []string{"http://127.0.0.1:9200"}
+	//DefaultESConfigUserName default value of ESConfigUserName
+	DefaultESConfigUserName string = ""
+	//DefaultESConfigPassword default value of ESConfigPassword
+	DefaultESConfigPassword string = ""
+
 	//DefaultAuramqSubscriberBufferSize default value of AuramqSubscriberBufferSize
 	DefaultAuramqSubscriberBufferSize = 1024
 	//DefaultAuramqPingWait default value of AuramqPingWait
@@ -240,6 +248,13 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.PDURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.PDURLsField))
 	rootCmd.PersistentFlags().String(ytrebuilder.RebuilderDBURLField, DefaultRebuilderDBURL, "mongoDB URL of rebuilder database")
 	viper.BindPFlag(ytrebuilder.RebuilderDBURLField, rootCmd.PersistentFlags().Lookup(ytrebuilder.RebuilderDBURLField))
+	//ES config
+	rootCmd.PersistentFlags().StringSlice(ytrebuilder.ESURLsField, DefaultESConfigURLs, "URLs of ES")
+	viper.BindPFlag(ytrebuilder.ESURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.ESURLsField))
+	rootCmd.PersistentFlags().String(ytrebuilder.ESUserNameField, DefaultESConfigUserName, "username of elasticsearch")
+	viper.BindPFlag(ytrebuilder.ESUserNameField, rootCmd.PersistentFlags().Lookup(ytrebuilder.ESUserNameField))
+	rootCmd.PersistentFlags().String(ytrebuilder.ESPasswordField, DefaultESConfigPassword, "password of elasticsearch")
+	viper.BindPFlag(ytrebuilder.ESPasswordField, rootCmd.PersistentFlags().Lookup(ytrebuilder.ESPasswordField))
 	//AuraMQ config
 	rootCmd.PersistentFlags().Int(ytrebuilder.AuramqSubscriberBufferSizeField, DefaultAuramqSubscriberBufferSize, "subscriber buffer size")
 	viper.BindPFlag(ytrebuilder.AuramqSubscriberBufferSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqSubscriberBufferSizeField))

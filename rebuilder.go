@@ -14,6 +14,7 @@ import (
 
 	"github.com/aurawing/auramq"
 	"github.com/aurawing/auramq/msg"
+	"github.com/elastic/go-elasticsearch/v7"
 	proto "github.com/golang/protobuf/proto"
 	"github.com/ivpusic/grpool"
 	log "github.com/sirupsen/logrus"
@@ -31,6 +32,7 @@ import (
 //const Int64Max int64 = 9223372036854775807
 var ErrNoTaskAlloc error = errors.New("no tasks can be allocated")
 var ErrInvalidNode error = errors.New("invalid rebuilding node")
+var ErrInvalidShard error = errors.New("invalid shard with wrong Node ID")
 
 //Rebuilder rebuilder
 type Rebuilder struct {
@@ -38,6 +40,7 @@ type Rebuilder struct {
 	rebuilderdbClient *mongo.Client
 	NodeManager       *NodeManager
 	Compensation      *CompensationConfig
+	ESClient          *elasticsearch.Client
 	Params            *MiscConfig
 	mqClis            map[int]*ytsync.Service
 	httpCli           *http.Client
@@ -46,10 +49,11 @@ type Rebuilder struct {
 	checkPoints       map[int32]int64
 	lock2             sync.RWMutex
 	taskSender        *TaskSender
+	scTaskCh          chan *SCRebuildPkg
 }
 
 //New create a new rebuilder instance
-func New(ctx context.Context, pdURLs []string, rebuilderDBURL string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
+func New(ctx context.Context, pdURLs []string, rebuilderDBURL string, esURLs []string, esUserName, esPassword string, mqconf *AuraMQConfig, cpsConf *CompensationConfig, conf *MiscConfig) (*Rebuilder, error) {
 	entry := log.WithFields(log.Fields{Function: "New"})
 	tikvCli, err := rawkv.NewClient(ctx, pdURLs, config.Default())
 	if err != nil {
@@ -68,8 +72,18 @@ func New(ctx context.Context, pdURLs []string, rebuilderDBURL string, mqconf *Au
 		return nil, err
 	}
 	entry.Info("node manager created")
+	config := elasticsearch.Config{
+		Addresses: esURLs,
+		Username:  esUserName,
+		Password:  esPassword,
+	}
+	esClient, err := elasticsearch.NewClient(config)
+	if err != nil {
+		entry.WithError(err).Errorf("creating es client failed: %v", esURLs)
+		return nil, err
+	}
 	pool := grpool.NewPool(conf.SyncPoolLength, conf.SyncQueueLength)
-	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, Params: conf, httpCli: &http.Client{}, taskAllocator: make(map[int32]*TaskChan), checkPoints: make(map[int32]int64), taskSender: NewTaskSender()}
+	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, ESClient: esClient, Params: conf, httpCli: &http.Client{}, taskAllocator: make(map[int32]*TaskChan), checkPoints: make(map[int32]int64), taskSender: NewTaskSender(), scTaskCh: make(chan *SCRebuildPkg, 100000)}
 	callback := func(msg *msg.Message) {
 		if msg.GetType() == auramq.BROADCAST {
 			if msg.GetDestination() == mqconf.MinerSyncTopic {
@@ -134,7 +148,25 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 			cond[fmt.Sprintf("uspaces.%s", k)] = v
 		}
 		if (node.Status == 2 || node.Status == 3) && oldNode.Status == 1 {
+			// _, err := FetchFirstNodeShard(ctx, rebuilder.tikvCli, node.ID)
+			// if err != nil && err == NoValError {
+			// 	entry.WithError(err).Error("no shards for rebuilding")
+			// 	//没有分片可重建，直接将矿机状态改为99
+			// 	msg := &pb.RebuiltMessage{NodeID: node.ID}
+			// 	b, err := proto.Marshal(msg)
+			// 	if err != nil {
+			// 		entry.WithError(err).Error("marshaling RebuiltMessage failed")
+			// 	} else {
+			// 		snID := int(node.ID) % len(rebuilder.mqClis)
+			// 		ret := rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
+			// 		if !ret {
+			// 			entry.Warn("sending RebuiltMessage failed")
+			// 		}
+			// 	}
+			// } else {
 			cond["tasktimestamp"] = time.Now().Unix()
+			//}
+
 		} else if node.Status == 1 {
 			tcond["$unset"] = bson.M{"tasktimestamp": true}
 		}
@@ -148,12 +180,12 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 			return err
 		}
 		rebuilder.NodeManager.UpdateNode(updatedNode)
-		if updatedNode.Status == 99 && oldNode.Status > 1 && oldNode.Status < 99 {
+		if updatedNode.Status >= 99 && oldNode.Status > 1 && oldNode.Status < 99 {
 			//重建完毕，状态改为3，删除旧任务
 			collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 			_, err = collectionRM.DeleteOne(ctx, bson.M{"_id": updatedNode.ID})
 			if err != nil {
-				entry.WithError(err).Error("delete rebuild miner with status 99")
+				entry.WithError(err).Errorf("delete rebuild miner with status %d", updatedNode.Status)
 			} else {
 				entry.Info("all rebuild tasks finished")
 			}
@@ -195,6 +227,7 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 	//go rebuilder.Compensate(ctx)
 	go rebuilder.processRebuildableMiner(ctx)
 	go rebuilder.processRebuildableShard(ctx)
+	//go rebuilder.processSelfCheckShards(ctx)
 	go rebuilder.reaper(ctx)
 }
 
@@ -204,7 +237,7 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	entry.Info("starting rebuildable node processor")
 	for {
-		cur, err := collection.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}, "tasktimestamp": bson.M{"$exists": true, "$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}})
+		cur, err := collection.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}, "tasktimestamp": bson.M{"$exists": true, "$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}}, options.Find().SetSort(bson.M{"status": -1, "usedSpace": -1}))
 		if err != nil {
 			entry.WithError(err).Error("cannot fetch rebuildable nodes")
 			time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableMinerInterval) * time.Second)
@@ -293,7 +326,12 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 			miner.ID = node.ID
 			miner.Segs = segs
 			miner.Grids = grids
-			if node.Round == 0 { //|| node.Status == 3 {
+			//if node.Round == 0 { //|| node.Status == 3 {
+			if node.Round < 3 ||
+				(node.Round >= 3 && node.Round < 10 && node.Round%2 == 0) ||
+				(node.Round >= 10 && node.Round < 20 && (node.Round-10)%3 == 0) ||
+				(node.Round >= 20 && node.Round < 40 && node.Round%5 == 0) ||
+				(node.Round >= 40 && node.Round%10 == 0) {
 				miner.Status = 3
 			} else {
 				miner.Status = 2
@@ -444,6 +482,9 @@ func (rebuilder *Rebuilder) Processing(ctx context.Context, miner *RebuildMiner)
 				rebuilder.lock.RLock()
 			OUTER:
 				for _, task := range tasks {
+					if rebuilder.taskAllocator[miner.ID] == nil {
+						break OUTER
+					}
 					select {
 					case rebuilder.taskAllocator[miner.ID].ch <- task:
 						entry.WithField("Grid", index).Debugf("insert shard %d to chan: nodeid -> %d/%d", task.ID, task.MinerID, task.MinerID2)
@@ -563,7 +604,7 @@ OUTER:
 				needHash = true
 			}
 			for _, s := range siblingShards {
-				entry.WithField(ShardID, shard.ID).Debugf("decode sibling shard info %d: %d", i, s.ID)
+				entry.WithField(ShardID, shard.ID).Tracef("decode sibling shard info %d: %d", i, s.ID)
 				if s.ID != i {
 					entry.WithField(ShardID, shard.ID).Errorf("sibling shard %d not found: %d", i, s.ID)
 					continue OUTER
@@ -716,16 +757,23 @@ OUTER:
 	expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
 	//一个任务包，多个分片的重建任务均在该任务包内
 	tasks := new(pb.MultiTaskDescription)
+	nodeInfoTime := int64(0)
 	//rbshards为RebuildShard结构体数组
 	for _, shard := range rbshards {
 		entry.Debugf("fetch shard %d: nodeId %d/%d", shard.ID, shard.MinerID, shard.MinerID2)
 		//被重建分片的全部关联分片（包括自身）的MD5哈希（仅当status=2且分片类型为0x68b3，即LRC分片时才需要该值，否则为空）
 		hashs := shard.Hashs
 		//所有关联分片所在矿机的P2P地址（只使用NodeID，没有NodeID2的，为和旧代码兼容）
-		locations := make([]*pb.P2PLocation, 0)
+		locations := make([]*pb.P2PLocation, len(hashs))
+		startTime2 := time.Now().UnixNano()
 		for idx, id := range shard.NodeIDs {
-			n1 := rebuilder.NodeManager.GetNode(id.NodeID1)
-			n2 := rebuilder.NodeManager.GetNode(id.NodeID2)
+			var n1, n2 *Node
+			if id.NodeID1 != 0 {
+				n1 = rebuilder.NodeManager.GetNode(id.NodeID1)
+			}
+			if id.NodeID2 != 0 {
+				n2 = rebuilder.NodeManager.GetNode(id.NodeID2)
+			}
 			loc := new(pb.P2PLocation)
 			if n1 == nil {
 				//如果矿机不存在则制造一个假地址
@@ -747,6 +795,7 @@ OUTER:
 			}
 			locations = append(locations, loc)
 		}
+		nodeInfoTime += time.Now().UnixNano() - startTime2
 		//关联分片数不正确则跳过该分片的重建
 		if (shard.Type == 0x68b3 && len(locations) < int(shard.VNF)) || (shard.Type == 0xc258 && len(locations) == 0) {
 			entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Warnf("sibling shards are not enough, only %d shards", len(hashs))
@@ -788,6 +837,23 @@ OUTER:
 				entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).WithError(err).Errorf("marshaling LRC task: %d", shard.ID)
 				continue
 			}
+
+			// for idx, s := range task.Hashs {
+			// 	entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Debugf("hash of index %d: %s", idx, base64.RawStdEncoding.EncodeToString(s))
+			// }
+			// for idx, loca := range task.Locations {
+			// 	if loca == nil {
+			// 		entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Debugf("location of index %d: null", idx)
+			// 	} else if loca.Addrs == nil && loca.Addrs2 == nil {
+			// 		entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Debugf("location of index %d: addrs/addrs2 is null", idx)
+			// 	} else if loca.Addrs == nil {
+			// 		entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Debugf("location of index %d: addrs is null", idx)
+			// 	} else if loca.Addrs2 == nil {
+			// 		entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Debugf("location of index %d: addrs2 is null", idx)
+			// 	} else {
+			// 		entry.WithField(MinerID, shard.MinerID).WithField(ShardID, shard.ID).Debugf("location of index %d: addrs2 is null", idx)
+			// 	}
+			// }
 		} else if shard.Type == 0xc258 { //多副本重建部分
 			task := new(pb.TaskDescriptionCP)
 			//拼接任务ID
@@ -814,7 +880,7 @@ OUTER:
 	tasks.SrcNodeID = minerID
 	//设置超时时间（相对时间，单位为秒）
 	tasks.ExpiredTimeGap = int32(rebuilder.Params.RebuildShardExpiredTime)
-	entry.WithField(MinerID, minerID).Debugf("length of task list is %d, expired time is %d, total time: %dms", len(tasks.Tasklist), tasks.ExpiredTime, (time.Now().UnixNano()-startTime)/1000000)
+	entry.WithField(MinerID, minerID).Debugf("length of task list is %d, expired time is %d, total time: %dms/%dms", len(tasks.Tasklist), tasks.ExpiredTime, (time.Now().UnixNano()-startTime)/1000000, nodeInfoTime/1000000)
 	return tasks, nil
 }
 
@@ -904,18 +970,18 @@ func GetBlocks(httpCli *http.Client, syncClientURL string, bindexes []uint64) (m
 	return response, nil
 }
 
-// func FetchBlock(ctx context.Context, tikvCli *rawkv.Client, blockID int64) (*Block, error) {
-// 	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_BLOCKS, blockID)))
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	block := new(Block)
-// 	err = block.FillBytes(buf)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return block, nil
-// }
+func FetchShardMeta(ctx context.Context, tikvCli *rawkv.Client, id int64) (*pb.ShardMetaMsg, error) {
+	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", "shardmeta", id)))
+	if err != nil {
+		return nil, err
+	}
+	msg := new(pb.ShardMetaMsg)
+	err = proto.Unmarshal(buf, msg)
+	if err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
 
 // func FetchShard(ctx context.Context, tikvCli *rawkv.Client, shardID int64) (*Shard, error) {
 // 	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%019d", PFX_SHARDS, shardID)))
@@ -1122,7 +1188,28 @@ func FindShardMeta(ctx context.Context, tikvCli *rawkv.Client, blockID uint64) (
 	return msg, nil
 }
 
-func FindNodeShard(ctx context.Context, tikvCli *rawkv.Client, shardID uint64, nodeID uint32) (*pb.ShardMsg, error) {
+func FindNodeShard(ctx context.Context, tikvCli *rawkv.Client, shardID int64, nodeID int32) (*Shard, error) {
+	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%d_%019d", PFX_SHARDNODES, nodeID, shardID)))
+	if err != nil {
+		return nil, err
+	}
+	msg := new(pb.ShardMsg)
+	err = proto.Unmarshal(buf, msg)
+	if err != nil {
+		return nil, err
+	}
+	s := new(Shard)
+	err = s.FillBytes(buf)
+	if err != nil {
+		return nil, err
+	}
+	if s.NodeID != nodeID && s.NodeID2 != nodeID {
+		return nil, ErrInvalidShard
+	}
+	return s, nil
+}
+
+func FindNodeShard2(ctx context.Context, tikvCli *rawkv.Client, shardID uint64, nodeID uint32) (*pb.ShardMsg, error) {
 	buf, err := tikvCli.Get(ctx, []byte(fmt.Sprintf("%s_%d_%019d", PFX_SHARDNODES, nodeID, shardID)))
 	if err != nil {
 		return nil, err

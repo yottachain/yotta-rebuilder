@@ -2,6 +2,11 @@ bind-addr: ":8080"
 pd-urls: 
 - "127.0.0.1:2379"
 rebuilderdb-url: "mongodb://127.0.0.1:27017/?connect=direct"
+esconfig:
+  urls:
+  - "http://127.0.0.1:9200"
+  username: "elastic"
+  password: "password"
 auramq:
   subscriber-buffer-size: 1024
   ping-wait: 30

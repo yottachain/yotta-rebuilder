@@ -272,6 +272,35 @@ type TaskChan struct {
 	close bool
 }
 
+type ErrShard struct {
+	Shard   string `json:"Shard"`
+	ShardId string `json:"ShardId"`
+	//RebuildStatus int32  `json:"RebuildStatus"`
+}
+
+type ErrShards struct {
+	MinerId   int64       `json:"MinerId"`
+	ErrNums   int32       `json:"ErrNums"`
+	ErrShards []*ErrShard `json:"ErrShards"`
+}
+
+type Source struct {
+	Timestamp string    `json:"timestamp"`
+	Log       ErrShards `json:"log"`
+}
+
+type NodeRebuildRequest struct {
+	Index  string  `json:"_index"`
+	ID     string  `json:"_id"`
+	Score  float64 `json:"_score"`
+	Source *Source `json:"_source"`
+}
+
+type SCRebuildPkg struct {
+	Shards  []*RebuildShard
+	MinerId int32
+}
+
 //relative DB and collection name
 var (
 	MetaDB            = "metabase"
