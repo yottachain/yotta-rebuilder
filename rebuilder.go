@@ -764,7 +764,7 @@ OUTER:
 		//被重建分片的全部关联分片（包括自身）的MD5哈希（仅当status=2且分片类型为0x68b3，即LRC分片时才需要该值，否则为空）
 		hashs := shard.Hashs
 		//所有关联分片所在矿机的P2P地址（只使用NodeID，没有NodeID2的，为和旧代码兼容）
-		locations := make([]*pb.P2PLocation, len(hashs))
+		locations := make([]*pb.P2PLocation, 0)
 		startTime2 := time.Now().UnixNano()
 		for idx, id := range shard.NodeIDs {
 			var n1, n2 *Node
