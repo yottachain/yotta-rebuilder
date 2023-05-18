@@ -207,6 +207,7 @@ message PunishMessage {
 
 message RebuiltMessage {
 	int32 nodeID = 1;
+	int32 status = 2;
 }
 
 //重建任务
@@ -216,6 +217,7 @@ message MultiTaskDescription{
 	int64 expiredTime = 2;
 	int32 srcNodeID = 3;
 	int32 expiredTimeGap = 4;
+	int32 type = 5;
 }
 //tasklist列表可能包含rs和副本集两种类型任务，按msgid再解析一次
 

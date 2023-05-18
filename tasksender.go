@@ -11,6 +11,7 @@ import (
 	net "github.com/yottachain/YTCoreService/net"
 	pkt "github.com/yottachain/YTCoreService/pkt"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type TaskSender struct {
@@ -71,19 +72,29 @@ func (rebuilder *Rebuilder) SendTasks(ctx context.Context) {
 	for {
 		var node *Node
 		for {
-			ele, err := rebuilder.taskSender.queue.DequeueOrWaitForNextElement()
+			qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			ele, err := rebuilder.taskSender.queue.DequeueOrWaitForNextElementContext(qctx)
+			cancel()
 			if err != nil {
-				entry.WithError(err).Error("get node from queue")
+				entry.WithError(err).Debug("get node from queue")
 				continue
 			}
 			node = ele.(*Node)
-			if node.Rebuilding > 1 || node.Status != 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) || time.Now().Unix()-node.Timestamp > 300 {
+			if node.Rebuilding > 200 || node.Status != 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) || time.Now().Unix()-node.Timestamp > 300 {
 				entry.WithField(MinerID, node.ID).Info("invalid rebuilding node")
 				rebuilder.taskSender.m.Delete(node.ID)
 				continue
 			}
 			break
 		}
+
+		collection := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
+		realNode := new(Node)
+		errr := collection.FindOne(ctx, bson.M{"_id": node.ID}).Decode(realNode)
+		if errr == nil && realNode.Rebuilding > 200 {
+			entry.WithField(MinerID, node.ID).Warn("rebuilding value too big")
+		}
+
 		var task *pb.MultiTaskDescription
 		var err error
 		for {
@@ -105,19 +116,21 @@ func (rebuilder *Rebuilder) SendTasks(ctx context.Context) {
 			rebuilder.taskSender.m.Delete(node.ID)
 			continue
 		}
-		pool.JobQueue <- func() {
-			n := &net.Node{Id: node.ID, Nodeid: node.NodeID, Pubkey: node.PubKey, Addrs: node.Addrs}
-			req := &pkt.TaskList{Tasklist: task.Tasklist, ExpiredTime: task.ExpiredTime, SrcNodeID: task.SrcNodeID, ExpiredTimeGap: task.ExpiredTimeGap}
-			_, e := net.RequestDN(req, n, "")
-			if e != nil {
-				entry.WithField(MinerID, node.ID).WithField("SrcNodeID", task.SrcNodeID).WithError(err).Errorf("Send rebuild task failed: %d--%s", e.Code, e.Msg)
-			} else {
-				entry.WithField(MinerID, node.ID).WithField("SrcNodeID", task.SrcNodeID).Infof("Send rebuild task OK,count %d", len(task.Tasklist))
+		pool.JobQueue <- (func(etask *pb.MultiTaskDescription, enode *Node) func() {
+			return func() {
+				n := &net.Node{Id: enode.ID, Nodeid: enode.NodeID, Pubkey: enode.PubKey, Addrs: enode.Addrs}
+				req := &pkt.TaskList{Tasklist: etask.Tasklist, ExpiredTime: etask.ExpiredTime, SrcNodeID: etask.SrcNodeID, ExpiredTimeGap: etask.ExpiredTimeGap}
+				_, e := net.RequestDN(req, n, false)
+				if e != nil {
+					entry.WithField(MinerID, enode.ID).WithField("SrcNodeID", etask.SrcNodeID).WithError(err).Errorf("Send rebuild task failed: %d--%s", e.Code, e.Msg)
+				} else {
+					entry.WithField(MinerID, enode.ID).WithField("SrcNodeID", etask.SrcNodeID).Infof("Send rebuild task OK,count %d", len(etask.Tasklist))
+				}
+				// rebuilder.taskSender.lock.Lock()
+				// defer rebuilder.taskSender.lock.Unlock()
+				rebuilder.taskSender.m.Delete(enode.ID)
 			}
-			// rebuilder.taskSender.lock.Lock()
-			// defer rebuilder.taskSender.lock.Unlock()
-			rebuilder.taskSender.m.Delete(node.ID)
-		}
+		})(task, node)
 
 	}
 }
@@ -128,13 +141,15 @@ func (rebuilder *Rebuilder) SendSCTasks(ctx context.Context) {
 	for {
 		var node *Node
 		for {
-			ele, err := rebuilder.taskSender.queue.DequeueOrWaitForNextElement()
+			qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			ele, err := rebuilder.taskSender.queue.DequeueOrWaitForNextElementContext(qctx)
+			cancel()
 			if err != nil {
-				entry.WithError(err).Error("get node from queue")
+				entry.WithError(err).Debug("get node from queue")
 				continue
 			}
 			node = ele.(*Node)
-			if node.Rebuilding > 1 || node.Status != 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) || time.Now().Unix()-node.Timestamp > 300 {
+			if node.Rebuilding > 200 || node.Status != 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) || time.Now().Unix()-node.Timestamp > 300 {
 				entry.WithField(MinerID, node.ID).Info("invalid rebuilding node")
 				rebuilder.taskSender.m.Delete(node.ID)
 				continue
@@ -150,6 +165,10 @@ func (rebuilder *Rebuilder) SendSCTasks(ctx context.Context) {
 					entry.WithField(MinerID, node.ID).WithError(err).Errorf("invalid node %d", node.ID)
 					rebuilder.taskSender.m.Delete(node.ID)
 					break
+				} else if err == ErrNoTaskAlloc {
+					entry.WithField(MinerID, node.ID).WithError(err).Debugf("get rebuild task for node %d", node.ID)
+					time.Sleep(time.Duration(1) * time.Second)
+					continue
 				} else {
 					entry.WithField(MinerID, node.ID).WithError(err).Errorf("get rebuild task for node %d", node.ID)
 					time.Sleep(time.Duration(1) * time.Second)
@@ -162,17 +181,21 @@ func (rebuilder *Rebuilder) SendSCTasks(ctx context.Context) {
 			rebuilder.taskSender.m.Delete(node.ID)
 			continue
 		}
-		pool.JobQueue <- func() {
-			n := &net.Node{Id: node.ID, Nodeid: node.NodeID, Pubkey: node.PubKey, Addrs: node.Addrs}
-			req := &pkt.TaskList{Tasklist: task.Tasklist, ExpiredTime: task.ExpiredTime, SrcNodeID: task.SrcNodeID, ExpiredTimeGap: task.ExpiredTimeGap}
-			_, e := net.RequestDN(req, n, "")
-			if e != nil {
-				entry.WithField(MinerID, node.ID).WithField("SrcNodeID", task.SrcNodeID).WithError(err).Errorf("Send rebuild task failed: %d--%s", e.Code, e.Msg)
-			} else {
-				entry.WithField(MinerID, node.ID).WithField("SrcNodeID", task.SrcNodeID).Infof("Send rebuild task OK,count %d", len(task.Tasklist))
+		pool.JobQueue <- (func(etask *pb.MultiTaskDescription, enode *Node) func() {
+			return func() {
+				n := &net.Node{Id: enode.ID, Nodeid: enode.NodeID, Pubkey: enode.PubKey, Addrs: enode.Addrs}
+				req := &pkt.TaskList{Tasklist: etask.Tasklist, ExpiredTime: etask.ExpiredTime, SrcNodeID: etask.SrcNodeID, ExpiredTimeGap: etask.ExpiredTimeGap}
+				_, e := net.RequestDN(req, n, false)
+				if e != nil {
+					entry.WithField(MinerID, enode.ID).WithField("SrcNodeID", etask.SrcNodeID).WithError(err).Errorf("Send rebuild task failed: %d--%s", e.Code, e.Msg)
+				} else {
+					entry.WithField(MinerID, enode.ID).WithField("SrcNodeID", etask.SrcNodeID).Infof("Send rebuild task OK,count %d", len(etask.Tasklist))
+				}
+				// rebuilder.taskSender.lock.Lock()
+				// defer rebuilder.taskSender.lock.Unlock()
+				rebuilder.taskSender.m.Delete(enode.ID)
 			}
-			rebuilder.taskSender.m.Delete(node.ID)
-		}
+		})(task, node)
 
 	}
 }

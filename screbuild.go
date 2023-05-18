@@ -6,26 +6,123 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 	proto "github.com/golang/protobuf/proto"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 )
 
-func (rebuilder *Rebuilder) processSelfCheckShards(ctx context.Context) {
-	entry := log.WithFields(log.Fields{Function: "processSelfCheckShards"})
-	query := `{"query": {"match_all" : {}},"size": 100}`
+type SCShard struct {
+	ID int64 `json:"id"`
+	// NodeID    int32 `json:"nodeId"`
+	// NodeID2   int32 `json:"nodeId2"`
+	MinerID   int32 `json:"minerId"`
+	Timestamp int64 `json:"timestamp"`
+}
+
+type RebuildQueueResp struct {
+	Index string   `json:"_index"`
+	ID    string   `json:"_id"`
+	Score float64  `json:"_score"`
+	Shard *SCShard `json:"_source"`
+}
+
+func (rebuilder *Rebuilder) CheckIndex(ctx context.Context) error {
+	entry := log.WithFields(log.Fields{Function: "CheckIndex"})
+
+	index := "rebuildqueue"
+	mapping := `
+    {
+      "settings": {
+        "number_of_shards": 1,
+		"number_of_replicas": 1
+      },
+      "mappings": {
+        "properties": {
+          "id": {
+            "type": "long"
+          },
+		  "minerId": {
+            "type": "integer"
+          },
+		  "timestamp": {
+            "type": "long"
+          }
+        }
+      }
+    }`
+
+	res, err := esapi.IndicesExistsRequest{
+		Index: []string{index},
+	}.Do(ctx, rebuilder.ESClient)
+	if err != nil {
+		entry.WithError(err).Error("create index rebuildqueue failed")
+		return err
+	}
+	if res.StatusCode == 200 {
+		res.Body.Close()
+		return nil
+	}
+	if res.StatusCode != 404 {
+		var err error
+		var e map[string]interface{}
+		if err = json.NewDecoder(res.Body).Decode(&e); err != nil {
+			entry.WithError(err).Error("decode error message of failed search response")
+			err = errors.New("decode error message of failed search response")
+		} else {
+			// Print the response status and error information.
+			err = fmt.Errorf("[%s] %s: %s",
+				res.Status(),
+				e["error"].(map[string]interface{})["type"],
+				e["error"].(map[string]interface{})["reason"],
+			)
+			entry.WithError(err).Error("failed search response")
+		}
+		res.Body.Close()
+		return err
+	}
+	entry.Info("index rebuildqueue is not exists, create new")
+	res, err = rebuilder.ESClient.Indices.Create(
+		index,
+		rebuilder.ESClient.Indices.Create.WithBody(strings.NewReader(mapping)),
+	)
+	if err != nil {
+		entry.WithError(err).Error("create index rebuildqueue failed")
+		return err
+	}
+	if res.IsError() {
+		var e map[string]interface{}
+		if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+			entry.WithError(err).Error("decode error message of failed search response")
+		} else {
+			// Print the response status and error information.
+			err := fmt.Errorf("[%s] %s: %s",
+				res.Status(),
+				e["error"].(map[string]interface{})["type"],
+				e["error"].(map[string]interface{})["reason"],
+			)
+			entry.WithError(err).Error("failed search response")
+		}
+		res.Body.Close()
+		return err
+	}
+	return nil
+}
+
+func (rebuilder *Rebuilder) VerifySelfCheckShards(ctx context.Context) {
+	entry := log.WithFields(log.Fields{Function: "VerifySelfCheckShards"})
+	query := `{"query": {"match_all" : {}},"sort":[{"timestamp":"asc"}],"size": 1000}`
 	var b strings.Builder
 	b.WriteString(query)
 	read := strings.NewReader(b.String())
 	for {
 		res, err := rebuilder.ESClient.Search(
 			rebuilder.ESClient.Search.WithContext(ctx),
-			rebuilder.ESClient.Search.WithIndex("verifyerr"),
+			rebuilder.ESClient.Search.WithIndex("rebuilderr"),
 			rebuilder.ESClient.Search.WithBody(read),
 			rebuilder.ESClient.Search.WithTrackTotalHits(true),
 			rebuilder.ESClient.Search.WithPretty(),
@@ -55,8 +152,14 @@ func (rebuilder *Rebuilder) processSelfCheckShards(ctx context.Context) {
 		var resb bytes.Buffer
 		resb.ReadFrom(res.Body)
 		hitCount := gjson.Get(resb.String(), "hits.total.value")
-		log.Debugf("document hits: %d\n", hitCount.Int())
+		entry.Debugf("document hits: %d\n", hitCount.Int())
+		if hitCount.Int() == 0 {
+			res.Body.Close()
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
 		vals := gjson.Get(resb.String(), "hits.hits")
+		entry.Debugf("get shard info from es: %s", vals)
 		requests := make([]*NodeRebuildRequest, 0, hitCount.Int())
 		err = json.NewDecoder(strings.NewReader(vals.String())).Decode(&requests)
 		if err != nil {
@@ -65,55 +168,242 @@ func (rebuilder *Rebuilder) processSelfCheckShards(ctx context.Context) {
 			time.Sleep(time.Duration(10) * time.Second)
 			continue
 		}
-		for _, req := range requests {
-			delRes, err := rebuilder.ESClient.Delete("verifyerr", req.ID)
+		for i, req := range requests {
+			if req.Source.Log.MinerId == 0 {
+				entry.WithError(err).Error("miner ID is zero")
+			} else {
+				shardIDs := make([]int64, 0)
+				//shardMap := make(map[int64]*ErrShard)
+				for _, s := range req.Source.Log.ErrShards {
+					if s.ShardId != 0 {
+						shardIDs = append(shardIDs, s.ShardId)
+						//shardMap[s.ShardId] = s
+					}
+				}
+
+				urls := rebuilder.Compensation.AllSyncURLs
+				snCount := len(urls)
+				snID := req.Source.Log.MinerId % int64(snCount)
+				shards, err := GetShards(rebuilder.HttpCli, rebuilder.Compensation.AllSyncURLs[snID], shardIDs)
+				if err != nil {
+					entry.WithError(err).Error("get shards failed")
+					continue
+				}
+
+				for _, s1 := range shards {
+					if int64(s1.NodeID) == req.Source.Log.MinerId || int64(s1.NodeID2) == req.Source.Log.MinerId {
+						var buf bytes.Buffer
+						if err := json.NewEncoder(&buf).Encode(SCShard{ID: s1.ID, MinerID: int32(req.Source.Log.MinerId), Timestamp: time.Now().UnixNano() - int64(rebuilder.Params.RebuildShardExpiredTime)*1000000000}); err != nil {
+							entry.WithError(err).Error("encode scshard failed")
+							continue
+						}
+						addres, err := rebuilder.ESClient.Index("rebuildqueue", &buf, rebuilder.ESClient.Index.WithContext(ctx), rebuilder.ESClient.Index.WithDocumentID(fmt.Sprintf("%d_%d", req.Source.Log.MinerId, s1.ID)))
+						if err != nil {
+							entry.WithError(err).Error("index scshard failed")
+							continue
+						}
+						addres.Body.Close()
+					}
+				}
+			}
+			var delRes *esapi.Response
+			if i == len(requests)-1 {
+				delRes, err = rebuilder.ESClient.Delete("rebuilderr", req.ID, rebuilder.ESClient.Delete.WithRefresh("wait_for"))
+			} else {
+				delRes, err = rebuilder.ESClient.Delete("rebuilderr", req.ID)
+			}
 			if err != nil {
 				entry.WithError(err).Errorf("delete self check shard failed: %d", req.Source.Log.MinerId)
 				continue
 			}
-			delRes.Body.Close()
-			err = rebuilder.BuildSelfCheckTasks(ctx, req)
-			if err != nil {
-				entry.WithError(err).Error("build self check rebuild task failed")
+			if delRes.IsError() {
+				var e map[string]interface{}
+				if err := json.NewDecoder(delRes.Body).Decode(&e); err != nil {
+					entry.WithError(err).Error("decode error message of failed search response")
+				} else {
+					// Print the response status and error information.
+					err := fmt.Errorf("[%s] %s: %s",
+						res.Status(),
+						e["error"].(map[string]interface{})["type"],
+						e["error"].(map[string]interface{})["reason"],
+					)
+					entry.WithError(err).Error("failed search response")
+				}
+				delRes.Body.Close()
+				time.Sleep(time.Duration(10) * time.Second)
 				continue
+			}
+			delRes.Body.Close()
+			entry.Debugf("delete shard info from es: %s", req.ID)
+		}
+		res.Body.Close()
+	}
+}
+
+func (rebuilder *Rebuilder) processSelfCheckShards(ctx context.Context) {
+	entry := log.WithFields(log.Fields{Function: "processSelfCheckShards"})
+	for {
+		rebuilder.lock2.RLock()
+		checkpoints := make([]int64, 0, len(rebuilder.checkPoints))
+		for _, value := range rebuilder.checkPoints {
+			checkpoints = append(checkpoints, value)
+		}
+		rebuilder.lock2.RUnlock()
+		checkpoint := Min(checkpoints...)
+		now := time.Now().UnixNano()
+		threshold := Min(checkpoint, now)
+		threshold -= int64(rebuilder.Params.RebuildShardExpiredTime) * 1000000000
+
+		query := fmt.Sprintf(`{"query":{"range":{"timestamp":{"lt":%d}}},"sort":[{"timestamp":{"order":"asc"}}],"size": 1000}`, threshold)
+		entry.Debugf("query: %s", query)
+		var b strings.Builder
+		b.WriteString(query)
+		read := strings.NewReader(b.String())
+		res, err := rebuilder.ESClient.Search(
+			rebuilder.ESClient.Search.WithContext(ctx),
+			rebuilder.ESClient.Search.WithIndex("rebuildqueue"),
+			rebuilder.ESClient.Search.WithBody(read),
+			rebuilder.ESClient.Search.WithTrackTotalHits(true),
+			rebuilder.ESClient.Search.WithPretty(),
+		)
+		if err != nil {
+			entry.WithError(err).Error("search rebuildqueue shards failed")
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		if res.IsError() {
+			var e map[string]interface{}
+			if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+				entry.WithError(err).Error("decode error message of failed search response")
+			} else {
+				// Print the response status and error information.
+				err := fmt.Errorf("[%s] %s: %s",
+					res.Status(),
+					e["error"].(map[string]interface{})["type"],
+					e["error"].(map[string]interface{})["reason"],
+				)
+				entry.WithError(err).Error("failed search response")
+			}
+			res.Body.Close()
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		var resb bytes.Buffer
+		resb.ReadFrom(res.Body)
+		hitCount := gjson.Get(resb.String(), "hits.total.value")
+		entry.Debugf("document hits: %d\n", hitCount.Int())
+		if hitCount.Int() == 0 {
+			res.Body.Close()
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		vals := gjson.Get(resb.String(), "hits.hits")
+		entry.Debugf("get shard info from es: %s", vals)
+		responses := make([]*RebuildQueueResp, 0, hitCount.Int())
+		err = json.NewDecoder(strings.NewReader(vals.String())).Decode(&responses)
+		if err != nil {
+			entry.WithError(err).Error("decode search response to json failed")
+			res.Body.Close()
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		fixMap := make(map[int32][]*SCShard)
+		for _, scresp := range responses {
+			fixMap[scresp.Shard.MinerID] = append(fixMap[scresp.Shard.MinerID], scresp.Shard)
+		}
+		i := 0
+		for minerID, rbshards := range fixMap {
+			i++
+			rbnode := rebuilder.NodeManager.GetNode(minerID)
+			if rbnode.Status != 1 {
+				for _, shard := range rbshards {
+					update := strings.NewReader(fmt.Sprintf(`{"doc": {"timestamp": %d}}`, now))
+					updateRes, err := rebuilder.ESClient.Update("rebuildqueue", fmt.Sprintf("%d_%d", shard.MinerID, shard.ID), update, rebuilder.ESClient.Update.WithContext(ctx))
+					if err != nil {
+						entry.WithError(err).Errorf("update timestamp of shard %d failed: %d", shard.ID, minerID)
+						continue
+					}
+					if updateRes.IsError() {
+						var e map[string]interface{}
+						if err := json.NewDecoder(updateRes.Body).Decode(&e); err != nil {
+							entry.WithError(err).Error("decode error message of failed search response")
+						} else {
+							// Print the response status and error information.
+							err := fmt.Errorf("[%s] %s: %s",
+								updateRes.Status(),
+								e["error"].(map[string]interface{})["type"],
+								e["error"].(map[string]interface{})["reason"],
+							)
+							entry.WithError(err).Error("failed update response")
+						}
+					}
+					updateRes.Body.Close()
+				}
+				continue
+			}
+			for i := 0; i < len(rbshards); i += rebuilder.Params.RebuildShardMinerTaskBatchSize {
+				end := i + rebuilder.Params.RebuildShardMinerTaskBatchSize
+				if end > len(rbshards) {
+					end = len(rbshards)
+				}
+				waitFor := false
+				if end == len(rbshards) {
+					waitFor = true
+				}
+				chunk := rbshards[i:end]
+				err = rebuilder.BuildSelfCheckTasks(ctx, minerID, chunk, waitFor)
+				if err != nil {
+					entry.WithError(err).Error("build self check rebuild task failed")
+				}
 			}
 		}
 		res.Body.Close()
 	}
 }
 
-func (rebuilder *Rebuilder) BuildSelfCheckTasks(ctx context.Context, request *NodeRebuildRequest) error {
-	entry := log.WithFields(log.Fields{Function: "BuildSelfCheckTasks", MinerID: request.Source.Log.MinerId})
-	tgtNode := rebuilder.NodeManager.GetNode(int32(request.Source.Log.MinerId))
+func (rebuilder *Rebuilder) BuildSelfCheckTasks(ctx context.Context, minerID int32, scshards []*SCShard, waitFor bool) error {
+	entry := log.WithFields(log.Fields{Function: "BuildSelfCheckTasks", MinerID: minerID})
+	tgtNode := rebuilder.NodeManager.GetNode(int32(minerID))
 	if tgtNode == nil {
 		err := errors.New("target node not found")
 		entry.WithError(err).Error("fetch target miner")
+		if waitFor {
+			time.Sleep(time.Duration(1) * time.Second)
+		}
 		return err
 	}
 	if tgtNode.Status == 2 || tgtNode.Status == 3 {
 		err := errors.New("target node is under rebuilding")
 		entry.WithError(err).Error("fetch target miner")
+		if waitFor {
+			time.Sleep(time.Duration(1) * time.Second)
+		}
 		return err
 	}
 	shards := make([]*Shard, 0)
-	for _, v := range request.Source.Log.ErrShards {
-		if v.ShardId == "" || v.ShardId == "0" {
-			continue
-		}
-		shardID, err := strconv.ParseInt(v.ShardId, 10, 64)
+	for _, v := range scshards {
+		//if v.ShardId == "" || v.ShardId == "0" {
+		// if v.ShardId == 0 {
+		// 	continue
+		// }
+		// shardID, err := strconv.ParseInt(v.ShardId, 10, 64)
+		// if err != nil {
+		// 	entry.WithError(err).Errorf("decode shard ID %s failed", v.ShardId)
+		// 	continue
+		// }
+		shardID := v.ID
+		shard, err := FindNodeShard(ctx, rebuilder.tikvCli, shardID, minerID)
 		if err != nil {
-			entry.WithError(err).Errorf("decode shard ID %s failed", v.ShardId)
-			continue
-		}
-		shard, err := FindNodeShard(ctx, rebuilder.tikvCli, shardID, int32(request.Source.Log.MinerId))
-		if err != nil {
-			entry.WithError(err).Errorf("find node shard %s failed", v.ShardId)
+			entry.WithError(err).Errorf("find node shard %s failed", v.ID)
 			continue
 		}
 		shards = append(shards, shard)
 	}
 	if len(shards) == 0 {
 		entry.WithError(ErrNoTaskAlloc).Error("find no node shard from tikv")
+		if waitFor {
+			time.Sleep(time.Duration(1) * time.Second)
+		}
 		return ErrNoTaskAlloc
 	}
 	bindexes := make([]uint64, 0)
@@ -121,13 +411,20 @@ func (rebuilder *Rebuilder) BuildSelfCheckTasks(ctx context.Context, request *No
 		bindexes = append(bindexes, s.BIndex)
 	}
 	var err error
-	blocksMap, err := GetBlocks(rebuilder.httpCli, rebuilder.Compensation.SyncClientURL, bindexes)
+	hcli := rebuilder.HttpCli
+	// if strings.HasPrefix(rebuilder.Compensation.SyncClientURL, "https") {
+	// 	hcli = rebuilder.httpCli2
+	// }
+	blocksMap, err := GetBlocksRetries(hcli, rebuilder.Compensation.SyncClientURL, bindexes, 3)
 	if err != nil {
 		entry.WithError(err).Error("fetching blocks")
+		if waitFor {
+			time.Sleep(time.Duration(1) * time.Second)
+		}
 		return err
 	}
 	rebuildShards := make([]*RebuildShard, 0)
-	idx := 0
+	//idx := 0
 OUTER:
 	for _, shard := range shards {
 		rshard := new(RebuildShard)
@@ -136,7 +433,11 @@ OUTER:
 		rshard.MinerID = shard.NodeID
 		rshard.MinerID2 = shard.NodeID2
 		rshard.VHF = shard.VHF
-		rshard.SNID = snIDFromID(uint64(shard.ID))
+		if rebuilder.Symmetric {
+			rshard.SNID = 0
+		} else {
+			rshard.SNID = snIDFromID(uint64(shard.ID))
+		}
 
 		block := blocksMap[shard.BIndex]
 		if block == nil {
@@ -188,19 +489,51 @@ OUTER:
 		rshard.NodeIDs = nodeIDs
 
 		rebuildShards = append(rebuildShards, rshard)
-		idx++
-		if i == int64(rebuilder.Params.RebuildShardMinerTaskBatchSize) {
-			idx = 0
-			pkg := &SCRebuildPkg{MinerId: int32(request.Source.Log.MinerId), Shards: rebuildShards}
-			rebuildShards = make([]*RebuildShard, 0)
-			rebuilder.scTaskCh <- pkg
-			entry.Infof("put self check shards task to chan,size: %d", len(rebuildShards))
-		}
+		// idx++
+		// if i == int64(rebuilder.Params.RebuildShardMinerTaskBatchSize) {
+		// 	idx = 0
+		// 	pkg := &SCRebuildPkg{MinerId: minerID, Shards: rebuildShards}
+		// 	rebuildShards = make([]*RebuildShard, 0)
+		// 	rebuilder.scTaskCh <- pkg
+		// 	entry.Infof("put self check shards task to chan,size: %d", len(rebuildShards))
+		// }
 	}
 	if len(rebuildShards) != 0 {
-		pkg := &SCRebuildPkg{MinerId: int32(request.Source.Log.MinerId), Shards: rebuildShards}
+		pkg := &SCRebuildPkg{MinerId: minerID, Shards: rebuildShards}
 		rebuilder.scTaskCh <- pkg
-		entry.Infof("put self check shards task to chan,size: %d", len(rebuildShards))
+		now := time.Now().UnixNano()
+		pkg.Timestamp = now
+		entry.Infof("put self check shards task to chan, size: %d", len(rebuildShards))
+		for i, shard := range scshards {
+			update := strings.NewReader(fmt.Sprintf(`{"doc": {"timestamp": %d}}`, now))
+			var updateRes *esapi.Response
+			if i == len(scshards)-1 && waitFor {
+				updateRes, err = rebuilder.ESClient.Update("rebuildqueue", fmt.Sprintf("%d_%d", shard.MinerID, shard.ID), update, rebuilder.ESClient.Update.WithContext(ctx), rebuilder.ESClient.Update.WithRefresh("wait_for"))
+			} else {
+				updateRes, err = rebuilder.ESClient.Update("rebuildqueue", fmt.Sprintf("%d_%d", shard.MinerID, shard.ID), update, rebuilder.ESClient.Update.WithContext(ctx))
+			}
+			if err != nil {
+				entry.WithError(err).Errorf("update timestamp of shard %d failed: %d", shard.ID, minerID)
+			}
+			if updateRes.IsError() {
+				var e map[string]interface{}
+				if err := json.NewDecoder(updateRes.Body).Decode(&e); err != nil {
+					entry.WithError(err).Error("decode error message of failed search response")
+				} else {
+					// Print the response status and error information.
+					err := fmt.Errorf("[%s] %s: %s",
+						updateRes.Status(),
+						e["error"].(map[string]interface{})["type"],
+						e["error"].(map[string]interface{})["reason"],
+					)
+					entry.WithError(err).Error("failed update response")
+				}
+			}
+		}
+	} else {
+		if waitFor {
+			time.Sleep(time.Duration(1) * time.Second)
+		}
 	}
 	return nil
 }
@@ -215,7 +548,7 @@ func (rebuilder *Rebuilder) GetSCRebuildTasks(ctx context.Context, id int32) (*p
 	}
 	startTime := time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
-	if rbNode.Rebuilding > 1 || rbNode.Status != 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	if rbNode.Rebuilding > 200 || rbNode.Status != 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		entry.WithError(ErrInvalidNode).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
 		return nil, ErrInvalidNode
 	}
@@ -228,14 +561,20 @@ func (rebuilder *Rebuilder) GetSCRebuildTasks(ctx context.Context, id int32) (*p
 			return nil, err
 		}
 		sctask = t
+		if sctask.Timestamp == 0 {
+			time.Sleep(time.Duration(500) * time.Millisecond)
+		}
 	default:
 		entry.Debug("no self check task get")
 	}
 	if sctask == nil {
-		return nil, errors.New("no self check task get")
+		return nil, ErrNoTaskAlloc
+	}
+	if sctask.Timestamp < time.Now().UnixNano()-int64(rebuilder.Params.RebuildShardExpiredTime)*1000000000*4/5 {
+		return nil, ErrTaskTimeout
 	}
 
-	expiredTime := time.Now().Unix() + int64(rebuilder.Params.RebuildShardExpiredTime)
+	expiredTime := sctask.Timestamp/1000000000 + int64(rebuilder.Params.RebuildShardExpiredTime)
 	//一个任务包，多个分片的重建任务均在该任务包内
 	tasks := new(pb.MultiTaskDescription)
 	//rbshards为RebuildShard结构体数组
@@ -253,19 +592,27 @@ func (rebuilder *Rebuilder) GetSCRebuildTasks(ctx context.Context, id int32) (*p
 				//如果矿机不存在则制造一个假地址
 				entry.Debugf("invalid node1 for shard %d/%d: nodeId %d", shard.ID, idx, id.NodeID1)
 				loc.NodeId = "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r"
-				loc.Addrs = []string{"/ip4/127.0.0.1/tcp/59999"}
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs = []string{"/ip4/127.0.0.1/tcp/59999"}
+				}
 			} else {
 				loc.NodeId = n1.NodeID
-				loc.Addrs = n1.Addrs
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs = n1.Addrs
+				}
 			}
 			if n2 == nil {
 				//如果矿机不存在则制造一个假地址
 				entry.Debugf("invalid node2 for shard %d/%d: nodeId %d", shard.ID, idx, id.NodeID2)
 				loc.NodeId2 = "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r"
-				loc.Addrs2 = []string{"/ip4/127.0.0.1/tcp/59999"}
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs2 = []string{"/ip4/127.0.0.1/tcp/59999"}
+				}
 			} else {
 				loc.NodeId2 = n2.NodeID
-				loc.Addrs2 = n2.Addrs
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs2 = n2.Addrs
+				}
 			}
 			locations = append(locations, loc)
 		}
@@ -293,12 +640,18 @@ func (rebuilder *Rebuilder) GetSCRebuildTasks(ctx context.Context, id int32) (*p
 				if sctask.MinerId == shard.MinerID { //如果被重建分片的NodeID为被重建矿机，则使用NodeID2作为重建备份节点
 					backNode := rebuilder.NodeManager.GetNode(shard.MinerID2)
 					if backNode != nil {
-						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
+						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID}
+						if !rebuilder.Params.RemoveMinerAddrs {
+							task.BackupLocation.Addrs = backNode.Addrs
+						}
 					}
 				} else if sctask.MinerId == shard.MinerID2 { //如果被重建分片的NodeID2为被重建矿机，则使用NodeID作为重建备份节点
 					backNode := rebuilder.NodeManager.GetNode(shard.MinerID)
 					if backNode != nil {
-						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
+						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID}
+						if !rebuilder.Params.RemoveMinerAddrs {
+							task.BackupLocation.Addrs = backNode.Addrs
+						}
 					}
 				} else {
 					entry.Errorf("neither MinerID nor MinerID2 match rebuilder ID for shard %d", shard.ID)

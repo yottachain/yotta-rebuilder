@@ -199,12 +199,12 @@ type Block struct {
 
 //Shard shard struct
 type Shard struct {
-	ID      int64  `bson:"_id" db:"id"`
-	VHF     []byte `bson:"VHF" db:"vhf"`
-	BIndex  uint64 `bson:"bindex" db:"bindex"`
-	Offset  uint8  `bson:"offset" db:"offset"`
-	NodeID  int32  `bson:"nodeId" db:"nid"`
-	NodeID2 int32  `bson:"nodeId2" db:"nid2"`
+	ID      int64  `bson:"_id" db:"id" json:"_id"`
+	VHF     []byte `bson:"VHF" db:"vhf" json:"VHF"`
+	BIndex  uint64 `bson:"bindex" db:"bindex" json:"bid"`
+	Offset  uint8  `bson:"offset" db:"offset" json:"offset"`
+	NodeID  int32  `bson:"nodeId" db:"nid" json:"nid"`
+	NodeID2 int32  `bson:"nodeId2" db:"nid2" json:"nid2"`
 }
 
 type Shard2 struct {
@@ -274,7 +274,7 @@ type TaskChan struct {
 
 type ErrShard struct {
 	Shard   string `json:"Shard"`
-	ShardId string `json:"ShardId"`
+	ShardId int64  `json:"ShardId"`
 	//RebuildStatus int32  `json:"RebuildStatus"`
 }
 
@@ -297,8 +297,9 @@ type NodeRebuildRequest struct {
 }
 
 type SCRebuildPkg struct {
-	Shards  []*RebuildShard
-	MinerId int32
+	Shards    []*RebuildShard
+	MinerId   int32
+	Timestamp int64
 }
 
 //relative DB and collection name
@@ -321,6 +322,7 @@ var (
 	RebuildShardTab   = "RebuildShard"
 	UnrebuildShardTab = "UnrebuildShard"
 	CPSRecordTab      = "CPSRecord"
+	BSFRecordTab      = "BSFRecord"
 	TrackProgressTab  = "TrackProgress"
 )
 

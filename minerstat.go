@@ -142,8 +142,8 @@ func (rebuilder *Rebuilder) TrackingStat(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "TrackingStat"})
 	urls := rebuilder.Compensation.AllSyncURLs
 	snCount := len(urls)
-	collectionMiner := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
-	collectionProgress := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(TrackProgressTab)
+	collectionMiner := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
+	collectionProgress := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(TrackProgressTab)
 	for i := 0; i < snCount; i++ {
 		snID := int32(i)
 		go func() {
@@ -166,7 +166,11 @@ func (rebuilder *Rebuilder) TrackingStat(ctx context.Context) {
 						continue
 					}
 				}
-				minerLogs, err := GetMinerLogs(rebuilder.httpCli, rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
+				hcli := rebuilder.HttpCli
+				// if strings.HasPrefix(rebuilder.Compensation.AllSyncURLs[snID], "https") {
+				// 	hcli = rebuilder.httpCli2
+				// }
+				minerLogs, err := GetMinerLogs(hcli, rebuilder.Compensation.AllSyncURLs[snID], record.Start, rebuilder.Compensation.BatchSize, time.Now().Unix()-int64(rebuilder.Compensation.SkipTime))
 				if err != nil {
 					time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
 					continue
@@ -200,7 +204,11 @@ func (rebuilder *Rebuilder) TrackingCheckPoints(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "TrackingCheckPoints"})
 	go func() {
 		for {
-			result, err := GetCheckPoints(rebuilder.httpCli, rebuilder.Compensation.SyncClientURL)
+			hcli := rebuilder.HttpCli
+			// if strings.HasPrefix(rebuilder.Compensation.SyncClientURL, "https") {
+			// 	hcli = rebuilder.httpCli2
+			// }
+			result, err := GetCheckPoints(hcli, rebuilder.Compensation.SyncClientURL)
 			if err != nil {
 				entry.WithError(err).Errorf("get checkpoints failed: %s/getCheckPoints", rebuilder.Compensation.SyncClientURL)
 				time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
@@ -256,7 +264,7 @@ func (rebuilder *Rebuilder) TrackingMiners(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "TrackingMiners"})
 	urls := rebuilder.Compensation.AllSyncURLs
 	snCount := len(urls)
-	collectionMiner := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
+	collectionMiner := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
 	for {
 		var wg sync.WaitGroup
 		wg.Add(snCount)
@@ -266,7 +274,11 @@ func (rebuilder *Rebuilder) TrackingMiners(ctx context.Context) {
 				entry.Infof("starting tracking SN%d", snID)
 				from := int64(0)
 				for {
-					miners, err := GetMiners(rebuilder.httpCli, rebuilder.Compensation.AllSyncURLs[snID], from, int64(rebuilder.Compensation.BatchSize), int64(snCount), snID)
+					hcli := rebuilder.HttpCli
+					// if strings.HasPrefix(rebuilder.Compensation.AllSyncURLs[snID], "https") {
+					// 	hcli = rebuilder.httpCli2
+					// }
+					miners, err := GetMiners(hcli, rebuilder.Compensation.AllSyncURLs[snID], from, int64(rebuilder.Compensation.BatchSize), int64(snCount), snID)
 					if err != nil {
 						time.Sleep(time.Duration(rebuilder.Compensation.WaitTime) * time.Second)
 						continue

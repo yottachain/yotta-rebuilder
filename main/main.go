@@ -6,16 +6,23 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
-	"github.com/tikv/client-go/config"
-	"github.com/tikv/client-go/rawkv"
 	ytrebuilder "github.com/yottachain/yotta-rebuilder"
 	"github.com/yottachain/yotta-rebuilder/cmd"
 
+	"github.com/elastic/go-elasticsearch/v8"
+	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
+	"github.com/tikv/client-go/config"
+	"github.com/tikv/client-go/rawkv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -23,6 +30,298 @@ import (
 
 func main() {
 	cmd.Execute()
+}
+
+func initlization(rebuilder *ytrebuilder.Rebuilder) {
+	mongoClient := rebuilder.RebuilderdbClient
+	collection := mongoClient.Database("metabase").Collection("shards")
+	esClient := rebuilder.ESClient
+	minerIDs := []int{115, 117, 204, 1233, 1442, 1577, 2544, 3455, 4522, 5566, 5981, 6281, 8123, 8233, 8763, 9000, 9100, 9833, 10233, 12387, 15937, 17612, 18923, 18999, 19762}
+	shardID := int64(7174283130441353496)
+
+	for i := 0; i < 150; i++ {
+		ErrShards := make([]*ytrebuilder.ErrShard, 0)
+		nodeID1 := minerIDs[rand.Intn(25)]
+		for j := 0; j < 10; j++ {
+			nodeID2 := 0
+			for {
+				nodeID2 = minerIDs[rand.Intn(25)]
+				if nodeID2 != nodeID1 {
+					break
+				}
+			}
+			shard := &ytrebuilder.ErrShard{Shard: "4SsdEnKu1EeTpui7tRMhFm", ShardId: shardID}
+			ErrShards = append(ErrShards, shard)
+			_, err := collection.InsertOne(context.Background(), &ytrebuilder.Shard2{ID: shardID, NodeID: int32(nodeID1), NodeID2: int32(nodeID2), VHF: []byte("4SsdEnKu1EeTpui7tRMhFm")})
+			if err != nil {
+				panic(err)
+			}
+			shardID++
+		}
+		msg := ytrebuilder.Source{Timestamp: "2023-02-09T10:25:11.22593108+08:00", Log: ytrebuilder.ErrShards{MinerId: int64(nodeID1), ErrNums: 10, ErrShards: ErrShards}}
+
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(msg); err != nil {
+			panic(err)
+		}
+
+		res, err := esClient.Index("rebuilderr", &buf)
+		if err != nil {
+			panic(err)
+		}
+		res.Body.Close()
+	}
+}
+
+func main4() {
+	config := elasticsearch.Config{
+		Addresses: []string{"http://127.0.0.1:9201"},
+		Username:  "elastic",
+		Password:  "elastic",
+	}
+	esClient, err := elasticsearch.NewClient(config)
+	if err != nil {
+		panic(err)
+	}
+
+	// _, err = esClient.Delete("rebuildqueue111", fmt.Sprintf("%d_%d", 1542, 7123456789012345678), esClient.Delete.WithContext(context.Background()))
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	update := strings.NewReader(fmt.Sprintf(`{"doc": {"timestamp": %d}}`, time.Now().UnixNano()))
+	res, err := esClient.Update("rebuildqueue", "204_7232786822244547127", update, esClient.Update.WithContext(context.Background()))
+	if err != nil {
+		panic(err)
+	}
+	if res.IsError() {
+		var e map[string]interface{}
+		if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+			log.Error("decode error message of failed search response")
+		} else {
+			// Print the response status and error information.
+			err = fmt.Errorf("[%s] %s: %s",
+				res.Status(),
+				e["error"].(map[string]interface{})["type"],
+				e["error"].(map[string]interface{})["reason"],
+			)
+			log.Error("failed search response")
+		}
+		res.Body.Close()
+		return
+	}
+
+	// mongoClient, err := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://127.0.0.1:27017/?directConnection=true"))
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// comp := ytrebuilder.CompensationConfig{AllSyncURLs: []string{"http://127.0.0.1:8081"}, SyncClientURL: "http://127.0.0.1:8082", BatchSize: 1000, WaitTime: 10, SkipTime: 180}
+	// rebuilder := &ytrebuilder.Rebuilder{ESClient: esClient, RebuilderdbClient: mongoClient, HttpCli: &http.Client{}, Compensation: &comp}
+	//initlization(rebuilder)
+	//rebuilder.CheckIndex(context.Background())
+	//rebuilder.VerifySelfCheckShards(context.Background())
+
+	// ctx := context.Background()
+	// query := fmt.Sprintf(`{"query":{"range":{"timestamp":{"lt":%d}}},"sort":[{"timestamp":{"order":"asc"}}],"size": 1000}`, 1684305839737689900-1200*1000000000)
+	// var b strings.Builder
+	// b.WriteString(query)
+	// read := strings.NewReader(b.String())
+	// res, err := rebuilder.ESClient.Search(
+	// 	rebuilder.ESClient.Search.WithContext(ctx),
+	// 	rebuilder.ESClient.Search.WithIndex("rebuildqueue"),
+	// 	rebuilder.ESClient.Search.WithBody(read),
+	// 	rebuilder.ESClient.Search.WithTrackTotalHits(true),
+	// 	rebuilder.ESClient.Search.WithPretty(),
+	// )
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// if res.IsError() {
+	// 	var e map[string]interface{}
+	// 	if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+	// 		log.Error("decode error message of failed search response")
+	// 	} else {
+	// 		// Print the response status and error information.
+	// 		err := fmt.Errorf("[%s] %s: %s",
+	// 			res.Status(),
+	// 			e["error"].(map[string]interface{})["type"],
+	// 			e["error"].(map[string]interface{})["reason"],
+	// 		)
+	// 		log.Errorf("failed search response: %s", err)
+	// 	}
+	// 	res.Body.Close()
+	// 	panic(err)
+	// }
+	// var resb bytes.Buffer
+	// resb.ReadFrom(res.Body)
+	// hitCount := gjson.Get(resb.String(), "hits.total.value")
+	// log.Debugf("document hits: %d\n", hitCount.Int())
+	// if hitCount.Int() == 0 {
+	// 	res.Body.Close()
+	// 	return
+	// }
+	// vals := gjson.Get(resb.String(), "hits.hits")
+	// log.Debugf("get shard info from es: %s", vals)
+	// responses := make([]*ytrebuilder.RebuildQueueResp, 0, hitCount.Int())
+	// err = json.NewDecoder(strings.NewReader(vals.String())).Decode(&responses)
+	// if err != nil {
+	// 	log.Error("decode search response to json failed")
+	// 	res.Body.Close()
+	// 	return
+	// }
+}
+
+func main3() {
+	config := elasticsearch.Config{
+		Addresses: []string{"http://127.0.0.1:9200"},
+		Username:  "elastic",
+		Password:  "UkbpMud401jWPU9jPLjL",
+	}
+	esClient, err := elasticsearch.NewClient(config)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = esClient.Delete("rebuildqueue", strconv.FormatInt(int64(7174283130441353496), 10))
+	if err != nil {
+		panic(err)
+	}
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ytrebuilder.SCShard{ID: int64(7174283130441353496), MinerID: int32(135), Timestamp: 0}); err != nil {
+		panic(err)
+	}
+
+	_, err = esClient.Index("rebuildqueue", &buf, esClient.Index.WithDocumentID(strconv.FormatInt(int64(7174283130441353496), 10)))
+	if err != nil {
+		panic(err)
+	}
+
+	// indexer, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
+	// 	Index:  "rebuilderr",
+	// 	Client: esClient,
+	// })
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// //msg := ytrebuilder.Source{Timestamp: "2023-02-09T10:25:11.22593108+08:00", Log: ytrebuilder.ErrShards{MinerId: 135, ErrNums: 1, ErrShards: []*ytrebuilder.ErrShard{{Shard: "4SsdEnKu1EeTpui7tRMhFm", ShardId: int64(7174283130441353496)}}}}
+	// msg := ytrebuilder.SCShard{ID: int64(7174283130441353496), NodeID: 135, NodeID2: 136, MinerID: int32(135), Timestamp: 0}
+	// var buf bytes.Buffer
+	// if err := json.NewEncoder(&buf).Encode(msg); err != nil {
+	// 	panic(err)
+	// }
+
+	// err = indexer.Add(
+	// 	context.Background(),
+	// 	esutil.BulkIndexerItem{
+	// 		Action: "index",
+	// 		Body:   bytes.NewReader(buf.Bytes()),
+	// 	},
+	// )
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// res, err := esClient.Index("rebuilderr", &buf, esClient.Index.WithDocumentType("_doc"))
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer res.Body.Close()
+	// fmt.Println(res.String())
+
+	// //msg = ytrebuilder.Source{Timestamp: "2023-02-09T10:29:44.31963677+08:00", Log: ytrebuilder.ErrShards{MinerId: 135, ErrNums: 1, ErrShards: []*ytrebuilder.ErrShard{{Shard: "DNzeGNoFrSEya9o2wuJL2A", ShardId: int64(7174283130441353497)}}}}
+	// msg = ytrebuilder.SCShard{ID: int64(7174283130441353497), NodeID: 119, NodeID2: 135, MinerID: int32(135), Timestamp: 0}
+	// var buf2 bytes.Buffer
+	// if err := json.NewEncoder(&buf2).Encode(msg); err != nil {
+	// 	panic(err)
+	// }
+	// res, err = esClient.Index("rebuilderr", &buf2, esClient.Index.WithDocumentType("_doc"))
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer res.Body.Close()
+	// fmt.Println(res.String())
+
+}
+
+func main2() {
+	config := elasticsearch.Config{
+		Addresses: []string{"http://127.0.0.1:9200"},
+		Username:  "elastic",
+		Password:  "password",
+	}
+	esClient, err := elasticsearch.NewClient(config)
+	if err != nil {
+		panic(err)
+	}
+	query := `{"query": {"match_all" : {}},"size": 100}`
+	var b strings.Builder
+	b.WriteString(query)
+	read := strings.NewReader(b.String())
+	for {
+		res, err := esClient.Search(
+			esClient.Search.WithContext(context.Background()),
+			esClient.Search.WithIndex("rebuilderr"),
+			esClient.Search.WithBody(read),
+			esClient.Search.WithTrackTotalHits(true),
+			esClient.Search.WithPretty(),
+		)
+		if err != nil {
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		if res.IsError() {
+			var e map[string]interface{}
+			if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+				fmt.Printf("decode error message of failed search response: %s\n", err)
+			} else {
+				// Print the response status and error information.
+				err := fmt.Errorf("[%s] %s: %s",
+					res.Status(),
+					e["error"].(map[string]interface{})["type"],
+					e["error"].(map[string]interface{})["reason"],
+				)
+				fmt.Printf("failed search response: %s\n", err)
+			}
+			res.Body.Close()
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		var resb bytes.Buffer
+		resb.ReadFrom(res.Body)
+		hitCount := gjson.Get(resb.String(), "hits.total.value")
+		log.Debugf("document hits: %d\n", hitCount.Int())
+		if hitCount.Int() == 0 {
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		vals := gjson.Get(resb.String(), "hits.hits")
+		fmt.Printf("get shard info from es: %s\n", vals)
+		requests := make([]*ytrebuilder.NodeRebuildRequest, 0, hitCount.Int())
+		err = json.NewDecoder(strings.NewReader(vals.String())).Decode(&requests)
+		if err != nil {
+			fmt.Printf("decode search response to json failed: %s\n", err)
+			res.Body.Close()
+			time.Sleep(time.Duration(10) * time.Second)
+			continue
+		}
+		for _, req := range requests {
+			delRes, err := esClient.Delete("rebuilderr", req.ID)
+			if err != nil {
+				fmt.Printf("delete self check shard failed: %d\n", req.Source.Log.MinerId)
+				continue
+			}
+			delRes.Body.Close()
+			fmt.Printf("delete shard info from es: %s\n", req.ID)
+			// err = rebuilder.BuildSelfCheckTasks(ctx, req)
+			// if err != nil {
+			// 	entry.WithError(err).Error("build self check rebuild task failed")
+			// 	continue
+			// }
+		}
+		res.Body.Close()
+	}
 }
 
 func main0() {

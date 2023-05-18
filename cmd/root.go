@@ -16,7 +16,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	ytnet "github.com/yottachain/YTCoreService/net"
-	ytcrypto "github.com/yottachain/YTCrypto"
 	ytrebuilder "github.com/yottachain/yotta-rebuilder"
 	pb "github.com/yottachain/yotta-rebuilder/pbrebuilder"
 )
@@ -31,8 +30,8 @@ var rootCmd = &cobra.Command{
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	Run: func(cmd *cobra.Command, args []string) {
-		priv, _ := ytcrypto.CreateKey()
-		ytnet.Start(0, 0, priv)
+		//priv, _ := ytcrypto.CreateKey()
+		ytnet.StartTcpClient(ytnet.DefaultConfig())
 		config := new(ytrebuilder.Config)
 		if err := viper.Unmarshal(config); err != nil {
 			panic(fmt.Sprintf("unable to decode into config struct, %v\n", err))
@@ -189,6 +188,8 @@ var (
 	DefaultAuramqPrivateKey = ""
 	//DefaultAuramqClientID default value of AuramqClientID
 	DefaultAuramqClientID = "yottarebuilder"
+	//DefaultAuramqSymmetric default value of AuramqSymmetric
+	DefaultAuramqSymmetric = false
 
 	//DefaultCompensationAllSyncURLs default value of CompensationAllSyncURLs
 	DefaultCompensationAllSyncURLs = []string{}
@@ -238,6 +239,10 @@ var (
 	DefaultMiscMaxConcurrentTaskBuilderSize int = 100
 	//DefaultMiscMinerVersionThreshold default value of MiscMinerVersionThreshold
 	DefaultMiscMinerVersionThreshold int = 0
+	//DefaultMiscRemoveMinerAddrs default value of MiscRemoveMinerAddrs
+	DefaultMiscRemoveMinerAddrs bool = false
+	//DefaultMiscRoundThreshold default value of MiscRoundThreshold
+	DefaultMiscRoundThreshold int = 0
 )
 
 func initFlag() {
@@ -274,6 +279,8 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.AuramqPrivateKeyField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqPrivateKeyField))
 	rootCmd.PersistentFlags().String(ytrebuilder.AuramqClientIDField, DefaultAuramqClientID, "client ID for identifying MQ client")
 	viper.BindPFlag(ytrebuilder.AuramqClientIDField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqClientIDField))
+	rootCmd.PersistentFlags().Bool(ytrebuilder.AuramqSymmetricField, DefaultAuramqSymmetric, "if auramq under symmetric mode")
+	viper.BindPFlag(ytrebuilder.AuramqSymmetricField, rootCmd.PersistentFlags().Lookup(ytrebuilder.AuramqSymmetricField))
 	//compensation config
 	rootCmd.PersistentFlags().StringSlice(ytrebuilder.CompensationAllSyncURLsField, DefaultCompensationAllSyncURLs, "all URLs of sync services, in the form of --compensation.all-sync-urls \"URL1,URL2,URL3\"")
 	viper.BindPFlag(ytrebuilder.CompensationAllSyncURLsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.CompensationAllSyncURLsField))
@@ -323,4 +330,8 @@ func initFlag() {
 	viper.BindPFlag(ytrebuilder.MiscMaxConcurrentTaskBuilderSizeField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscMaxConcurrentTaskBuilderSizeField))
 	rootCmd.PersistentFlags().Int(ytrebuilder.MiscMinerVersionThresholdField, DefaultMiscMinerVersionThreshold, "miner that version greater than which can be allocated")
 	viper.BindPFlag(ytrebuilder.MiscMinerVersionThresholdField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscMinerVersionThresholdField))
+	rootCmd.PersistentFlags().Bool(ytrebuilder.MiscRemoveMinerAddrsField, DefaultMiscRemoveMinerAddrs, "whether remove address of miner in rebuild message send to miner")
+	viper.BindPFlag(ytrebuilder.MiscRemoveMinerAddrsField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscRemoveMinerAddrsField))
+	rootCmd.PersistentFlags().Int(ytrebuilder.MiscRoundThresholdField, DefaultMiscRoundThreshold, "round value bigger than this value need to be removed")
+	viper.BindPFlag(ytrebuilder.MiscRoundThresholdField, rootCmd.PersistentFlags().Lookup(ytrebuilder.MiscRoundThresholdField))
 }

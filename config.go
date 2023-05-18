@@ -33,6 +33,8 @@ const (
 	AuramqPrivateKeyField = "auramq.private-key"
 	//AuramqClientIDField Field name of auramq.client-id
 	AuramqClientIDField = "auramq.client-id"
+	//AuramqSymmetricField Field name of auramq.symmetric
+	AuramqSymmetricField = "auramq.symmetric"
 
 	//CompensationAllSyncURLsField Field name of compensation.all-sync-urls
 	CompensationAllSyncURLsField = "compensation.all-sync-urls"
@@ -82,6 +84,10 @@ const (
 	MiscMaxConcurrentTaskBuilderSizeField = "misc.max-concurrent-task-builder-size"
 	//MiscMinerVersionThresholdField Field name of misc.miner-version-threshold
 	MiscMinerVersionThresholdField = "misc.miner-version-threshold"
+	//MiscRemoveMinerAddrsField Field name of misc.remove-miner-addrs
+	MiscRemoveMinerAddrsField = "misc.remove-miner-addrs"
+	//MiscRoundThresholdField Field name of misc.round-threshold
+	MiscRoundThresholdField = "misc.round-threshold"
 )
 
 //Config system configuration
@@ -113,6 +119,7 @@ type AuraMQConfig struct {
 	Account              string   `mapstructure:"account"`
 	PrivateKey           string   `mapstructure:"private-key"`
 	ClientID             string   `mapstructure:"client-id"`
+	Symmetric            bool     `mapstructure:"symmetric"`
 }
 
 //CompensationConfig compensation configuration
@@ -135,17 +142,19 @@ type LogConfig struct {
 
 //MiscConfig miscellaneous configuration
 type MiscConfig struct {
-	RebuildableMinerTimeGap         int `mapstructure:"rebuildable-miner-time-gap"`
-	RebuildingMinerCountPerBatch    int `mapstructure:"rebuilding-miner-count-per-batch"`
-	ProcessRebuildableMinerInterval int `mapstructure:"process-rebuildable-miner-interval"`
-	ProcessRebuildableShardInterval int `mapstructure:"process-rebuildable-shard-interval"`
-	ProcessReaperInterval           int `mapstructure:"process-reaper-interval"`
-	RebuildShardExpiredTime         int `mapstructure:"rebuild-shard-expired-time"`
-	RebuildShardTaskBatchSize       int `mapstructure:"rebuild-shard-task-batch-size"`
-	RebuildShardMinerTaskBatchSize  int `mapstructure:"rebuild-shard-miner-task-batch-size"`
-	SyncPoolLength                  int `mapstructure:"sync-pool-length"`
-	SyncQueueLength                 int `mapstructure:"sync-queue-length"`
-	WeightThreshold                 int `mapstructure:"weight-threshold"`
-	MaxConcurrentTaskBuilderSize    int `mapstructure:"max-concurrent-task-builder-size"`
-	MinerVersionThreshold           int `mapstructure:"miner-version-threshold"`
+	RebuildableMinerTimeGap         int  `mapstructure:"rebuildable-miner-time-gap"`
+	RebuildingMinerCountPerBatch    int  `mapstructure:"rebuilding-miner-count-per-batch"`
+	ProcessRebuildableMinerInterval int  `mapstructure:"process-rebuildable-miner-interval"`
+	ProcessRebuildableShardInterval int  `mapstructure:"process-rebuildable-shard-interval"`
+	ProcessReaperInterval           int  `mapstructure:"process-reaper-interval"`
+	RebuildShardExpiredTime         int  `mapstructure:"rebuild-shard-expired-time"`
+	RebuildShardTaskBatchSize       int  `mapstructure:"rebuild-shard-task-batch-size"`
+	RebuildShardMinerTaskBatchSize  int  `mapstructure:"rebuild-shard-miner-task-batch-size"`
+	SyncPoolLength                  int  `mapstructure:"sync-pool-length"`
+	SyncQueueLength                 int  `mapstructure:"sync-queue-length"`
+	WeightThreshold                 int  `mapstructure:"weight-threshold"`
+	MaxConcurrentTaskBuilderSize    int  `mapstructure:"max-concurrent-task-builder-size"`
+	MinerVersionThreshold           int  `mapstructure:"miner-version-threshold"`
+	RemoveMinerAddrs                bool `mapstructure:"remove-miner-addrs"`
+	RoundThreshold                  int  `mapstructure:"round-threshold"`
 }

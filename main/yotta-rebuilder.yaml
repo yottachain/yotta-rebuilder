@@ -53,3 +53,4 @@ misc:
   weight-threshold: 10
   max-concurrent-task-builder-size: 200
   miner-version-threshold: 100
+  remove-miner-addrs: true

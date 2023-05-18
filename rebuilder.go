@@ -3,10 +3,12 @@ package ytrebuilder
 import (
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,7 +16,7 @@ import (
 
 	"github.com/aurawing/auramq"
 	"github.com/aurawing/auramq/msg"
-	"github.com/elastic/go-elasticsearch/v7"
+	"github.com/elastic/go-elasticsearch/v8"
 	proto "github.com/golang/protobuf/proto"
 	"github.com/ivpusic/grpool"
 	log "github.com/sirupsen/logrus"
@@ -26,6 +28,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/net/http2"
 )
 
 //Int64Max max value of int64
@@ -33,23 +36,27 @@ import (
 var ErrNoTaskAlloc error = errors.New("no tasks can be allocated")
 var ErrInvalidNode error = errors.New("invalid rebuilding node")
 var ErrInvalidShard error = errors.New("invalid shard with wrong Node ID")
+var ErrTaskTimeout error = errors.New("tasks is timeout")
 
 //Rebuilder rebuilder
 type Rebuilder struct {
 	tikvCli           *rawkv.Client
-	rebuilderdbClient *mongo.Client
+	RebuilderdbClient *mongo.Client
 	NodeManager       *NodeManager
 	Compensation      *CompensationConfig
 	ESClient          *elasticsearch.Client
-	Params            *MiscConfig
-	mqClis            map[int]*ytsync.Service
-	httpCli           *http.Client
-	lock              sync.RWMutex
-	taskAllocator     map[int32]*TaskChan
-	checkPoints       map[int32]int64
-	lock2             sync.RWMutex
-	taskSender        *TaskSender
-	scTaskCh          chan *SCRebuildPkg
+	//ESIndexer         esutil.BulkIndexer
+	Params  *MiscConfig
+	mqClis  map[int]*ytsync.Service
+	HttpCli *http.Client
+	//httpCli2          *http.Client
+	lock          sync.RWMutex
+	taskAllocator map[int32]*TaskChan
+	checkPoints   map[int32]int64
+	lock2         sync.RWMutex
+	taskSender    *TaskSender
+	scTaskCh      chan *SCRebuildPkg
+	Symmetric     bool
 }
 
 //New create a new rebuilder instance
@@ -82,22 +89,48 @@ func New(ctx context.Context, pdURLs []string, rebuilderDBURL string, esURLs []s
 		entry.WithError(err).Errorf("creating es client failed: %v", esURLs)
 		return nil, err
 	}
+	// indexer, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
+	// 	Index:  "rebuildqueue",
+	// 	Client: esClient,
+	// })
+	// if err != nil {
+	// 	entry.WithError(err).Errorf("creating bulk indexer failed: %v", esURLs)
+	// 	return nil, err
+	// }
+
 	pool := grpool.NewPool(conf.SyncPoolLength, conf.SyncQueueLength)
-	rebuilder := &Rebuilder{tikvCli: tikvCli, rebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, ESClient: esClient, Params: conf, httpCli: &http.Client{}, taskAllocator: make(map[int32]*TaskChan), checkPoints: make(map[int32]int64), taskSender: NewTaskSender(), scTaskCh: make(chan *SCRebuildPkg, 100000)}
+	httpCli := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+		},
+	}
+	// httpCli2 := &http.Client{
+	// 	Transport: &http2.Transport{
+	// 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	// 	},
+	// 	Timeout: 15 * time.Second,
+	// }
+	rebuilder := &Rebuilder{tikvCli: tikvCli, RebuilderdbClient: rebuilderdbClient, NodeManager: nodeMgr, Compensation: cpsConf, ESClient: esClient, Params: conf, HttpCli: httpCli, taskAllocator: make(map[int32]*TaskChan), checkPoints: make(map[int32]int64), taskSender: NewTaskSender(), scTaskCh: make(chan *SCRebuildPkg, 100000), Symmetric: mqconf.Symmetric}
 	callback := func(msg *msg.Message) {
 		if msg.GetType() == auramq.BROADCAST {
 			if msg.GetDestination() == mqconf.MinerSyncTopic {
-				pool.JobQueue <- func() {
-					nodemsg := new(pb.NodeMsg)
-					err := proto.Unmarshal(msg.Content, nodemsg)
-					if err != nil {
-						entry.WithError(err).Error("decoding nodeMsg failed")
-						return
+				pool.JobQueue <- (func(content []byte) func() {
+					return func() {
+						nodemsg := new(pb.NodeMsg)
+						err := proto.Unmarshal(content, nodemsg)
+						if err != nil {
+							entry.WithError(err).Error("decoding nodeMsg failed")
+							return
+						}
+						node := new(Node)
+						node.Fillby(nodemsg)
+						rebuilder.syncNode(ctx, node)
 					}
-					node := new(Node)
-					node.Fillby(nodemsg)
-					rebuilder.syncNode(ctx, node)
-				}
+				})(msg.Content)
 			}
 		}
 	}
@@ -115,7 +148,7 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 	if node.ID == 0 {
 		return errors.New("node ID cannot be 0")
 	}
-	collection := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
+	collection := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
 	otherDoc := bson.A{}
 	if node.Ext != "" && node.Ext[0] == '[' && node.Ext[len(node.Ext)-1] == ']' {
 		var bdoc interface{}
@@ -182,7 +215,7 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 		rebuilder.NodeManager.UpdateNode(updatedNode)
 		if updatedNode.Status >= 99 && oldNode.Status > 1 && oldNode.Status < 99 {
 			//重建完毕，状态改为3，删除旧任务
-			collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
+			collectionRM := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 			_, err = collectionRM.DeleteOne(ctx, bson.M{"_id": updatedNode.ID})
 			if err != nil {
 				entry.WithError(err).Errorf("delete rebuild miner with status %d", updatedNode.Status)
@@ -214,7 +247,7 @@ func (rebuilder *Rebuilder) syncNode(ctx context.Context, node *Node) error {
 	// 	return nil
 	// }
 	// rebuilder.SendTask(ctx, node)
-	if node.Rebuilding > 1 || node.Status != 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	if node.Rebuilding > 200 || node.Status != 1 || node.Valid == 0 || node.Weight < float64(rebuilder.Params.WeightThreshold) || node.AssignedSpace <= 0 || node.Quota <= 0 || node.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		entry.Debug("can not allocate rebuild task to current miner")
 		return nil
 	}
@@ -227,23 +260,63 @@ func (rebuilder *Rebuilder) Start(ctx context.Context) {
 	//go rebuilder.Compensate(ctx)
 	go rebuilder.processRebuildableMiner(ctx)
 	go rebuilder.processRebuildableShard(ctx)
-	//go rebuilder.processSelfCheckShards(ctx)
+	//go rebuilder.ShardsFix(ctx)
+	rebuilder.CheckIndex(ctx)
+	go rebuilder.VerifySelfCheckShards(ctx)
+	go rebuilder.processSelfCheckShards(ctx)
 	go rebuilder.reaper(ctx)
 }
 
 func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "processRebuildableMiner"})
-	collection := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
-	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
+	collection := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
+	collectionRM := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	entry.Info("starting rebuildable node processor")
 	for {
-		cur, err := collection.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}, "tasktimestamp": bson.M{"$exists": true, "$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}}, options.Find().SetSort(bson.M{"status": -1, "usedSpace": -1}))
+		cur, err := collection.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}, "tasktimestamp": bson.M{"$exists": true, "$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}}, options.Find().SetSort(bson.M{"status": -1, "round": 1}))
+		//cur, err := collection.Find(ctx, bson.M{"_id": bson.M{"$in": bson.A{71, 295, 299, 311, 330, 477, 1000, 1943, 8828, 9652, 9918, 10127, 10227, 10269, 10284, 10290, 10305, 10375, 10396, 10424, 10482, 10573, 10588, 10615, 10628, 10640, 10649, 10670, 10708, 10733, 10768, 10824, 10845, 10938, 12714, 14946, 16482, 17271, 19260, 19679, 20225}}, "status": bson.M{"$gt": 1, "$lt": 99}, "tasktimestamp": bson.M{"$exists": true, "$lt": time.Now().Unix() - int64(rebuilder.Params.RebuildableMinerTimeGap)}}, options.Find().SetSort(bson.M{"status": -1, "round": 1}))
 		if err != nil {
 			entry.WithError(err).Error("cannot fetch rebuildable nodes")
 			time.Sleep(time.Duration(rebuilder.Params.ProcessRebuildableMinerInterval) * time.Second)
 			continue
 		}
 		for cur.Next(ctx) {
+			node := new(Node)
+			err = cur.Decode(node)
+			if err != nil {
+				entry.WithError(err).Error("decoding node")
+				continue
+			}
+			if rebuilder.Params.RoundThreshold != 0 && node.Round >= int64(rebuilder.Params.RoundThreshold) {
+				entry.WithField(MinerID, node.ID).WithError(err).Error("miner round is bigger than round threshold")
+				//重建轮数大于指定值，直接将矿机状态改为101
+				msg := &pb.RebuiltMessage{NodeID: node.ID, Status: 101}
+				b, err := proto.Marshal(msg)
+				if err != nil {
+					entry.WithField(MinerID, node.ID).WithError(err).Error("marshaling RebuiltMessage failed")
+				} else {
+					var ret bool
+					if rebuilder.Symmetric {
+						for _, mqcli := range rebuilder.mqClis {
+							ret = mqcli.Send(ctx, fmt.Sprintf("sn%d", 0), append([]byte{byte(RebuiltMessage)}, b...))
+							if ret {
+								break
+							}
+						}
+					} else {
+						snID := int(node.ID) % len(rebuilder.mqClis)
+						ret = rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
+					}
+					if !ret {
+						entry.WithField(MinerID, node.ID).Warn("sending RebuiltMessage failed")
+					}
+					_, err = collection.UpdateOne(ctx, bson.M{"_id": node.ID}, bson.M{"$unset": bson.M{"tasktimestamp": ""}})
+					if err != nil {
+						entry.WithField(MinerID, node.ID).WithError(err).Error("unset tasktimestamp of rebuild miner")
+					}
+				}
+			}
+
 			cnt, err := collectionRM.CountDocuments(ctx, bson.M{"status": bson.M{"$lt": 99}})
 			if err != nil {
 				entry.WithError(err).Error("cannot calculate count of rebuilding nodes")
@@ -253,12 +326,7 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 				entry.Debug("reaching max count of rebuilding miners")
 				break
 			}
-			node := new(Node)
-			err = cur.Decode(node)
-			if err != nil {
-				entry.WithError(err).Error("decoding node")
-				continue
-			}
+
 			rangeFrom := int64(0)
 			rangeTo := int64(0)
 			shardFrom, err := FetchFirstNodeShard(ctx, rebuilder.tikvCli, node.ID)
@@ -273,8 +341,18 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 					if err != nil {
 						entry.WithField(MinerID, node.ID).WithError(err).Error("marshaling RebuiltMessage failed")
 					} else {
-						snID := int(node.ID) % len(rebuilder.mqClis)
-						ret := rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
+						var ret bool
+						if rebuilder.Symmetric {
+							for _, mqcli := range rebuilder.mqClis {
+								ret = mqcli.Send(ctx, fmt.Sprintf("sn%d", 0), append([]byte{byte(RebuiltMessage)}, b...))
+								if ret {
+									break
+								}
+							}
+						} else {
+							snID := int(node.ID) % len(rebuilder.mqClis)
+							ret = rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
+						}
 						if !ret {
 							entry.WithField(MinerID, node.ID).Warn("sending RebuiltMessage failed")
 						}
@@ -287,7 +365,7 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 				continue
 			} else {
 				rangeFrom = shardFrom.ID
-				entry.WithField(MinerID, node.ID).Debugf("rebuilding range starts at %d", rangeFrom)
+				entry.WithField(MinerID, node.ID).Infof("rebuilding range starts at %d", rangeFrom)
 			}
 			shardTo, err := FetchLastNodeShard(ctx, rebuilder.tikvCli, node.ID)
 			if err != nil {
@@ -301,7 +379,7 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 				rangeTo = time.Now().Unix() << 32
 			} else {
 				rangeTo = shardTo.ID
-				entry.WithField(MinerID, node.ID).Debugf("rebuilding range ends at %d", rangeTo)
+				entry.WithField(MinerID, node.ID).Infof("rebuilding range ends at %d", rangeTo)
 			}
 			segs := make([]int64, 0)
 			//grids := make(map[int64]int64)
@@ -326,12 +404,12 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 			miner.ID = node.ID
 			miner.Segs = segs
 			miner.Grids = grids
-			//if node.Round == 0 { //|| node.Status == 3 {
-			if node.Round < 3 ||
-				(node.Round >= 3 && node.Round < 10 && node.Round%2 == 0) ||
-				(node.Round >= 10 && node.Round < 20 && (node.Round-10)%3 == 0) ||
-				(node.Round >= 20 && node.Round < 40 && node.Round%5 == 0) ||
-				(node.Round >= 40 && node.Round%10 == 0) {
+			if node.Round == 0 || node.Status == 3 {
+				// if node.Round < 3 ||
+				// 	(node.Round >= 3 && node.Round < 10 && node.Round%2 == 0) ||
+				// 	(node.Round >= 10 && node.Round < 20 && (node.Round-10)%3 == 0) ||
+				// 	(node.Round >= 20 && node.Round < 40 && node.Round%5 == 0) ||
+				// 	(node.Round >= 40 && node.Round%10 == 0) {
 				miner.Status = 3
 			} else {
 				miner.Status = 2
@@ -355,8 +433,8 @@ func (rebuilder *Rebuilder) processRebuildableMiner(ctx context.Context) {
 
 func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "processRebuildableShard"})
-	collection := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
-	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
+	collection := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(NodeTab)
+	collectionRM := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	for {
 		cur, err := collectionRM.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}})
 		if err != nil {
@@ -403,8 +481,18 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 							if err != nil {
 								entry.WithField(MinerID, miner.ID).WithError(err).Error("marshaling RebuiltMessage failed")
 							} else {
-								snID := int(miner.ID) % len(rebuilder.mqClis)
-								ret := rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
+								var ret bool
+								if rebuilder.Symmetric {
+									for _, mqcli := range rebuilder.mqClis {
+										ret = mqcli.Send(ctx, fmt.Sprintf("sn%d", 0), append([]byte{byte(RebuiltMessage)}, b...))
+										if ret {
+											break
+										}
+									}
+								} else {
+									snID := int(miner.ID) % len(rebuilder.mqClis)
+									ret = rebuilder.mqClis[snID].Send(ctx, fmt.Sprintf("sn%d", snID), append([]byte{byte(RebuiltMessage)}, b...))
+								}
 								if !ret {
 									entry.WithField(MinerID, miner.ID).Warn("sending RebuiltMessage failed")
 								}
@@ -419,6 +507,7 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 						if err != nil {
 							entry.WithField(MinerID, miner.ID).WithError(err).Error("restart rebuild miner")
 						}
+						entry.WithField(MinerID, miner.ID).Infof("reset rebuild miner for next round")
 					}
 				}
 			}
@@ -432,7 +521,7 @@ func (rebuilder *Rebuilder) processRebuildableShard(ctx context.Context) {
 func (rebuilder *Rebuilder) Processing(ctx context.Context, miner *RebuildMiner) {
 	entry := log.WithFields(log.Fields{Function: "Processing", MinerID: miner.ID})
 	entry.Infof("creating task buffer for miner %+v", miner)
-	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
+	collectionRM := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	segs := miner.Segs
 	grids := miner.Grids
 	wg := sync.WaitGroup{}
@@ -482,7 +571,7 @@ func (rebuilder *Rebuilder) Processing(ctx context.Context, miner *RebuildMiner)
 				rebuilder.lock.RLock()
 			OUTER:
 				for _, task := range tasks {
-					if rebuilder.taskAllocator[miner.ID] == nil {
+					if rebuilder.taskAllocator[miner.ID] == nil { //TODO: 增加判断rebuilder.taskAllocator[miner.ID].ch是否关闭
 						break OUTER
 					}
 					select {
@@ -525,7 +614,11 @@ func (rebuilder *Rebuilder) buildTasks(ctx context.Context, shards []*Shard, min
 			bindexes = append(bindexes, s.BIndex)
 		}
 		var err error
-		blocksMap, err = GetBlocks(rebuilder.httpCli, rebuilder.Compensation.SyncClientURL, bindexes)
+		hcli := rebuilder.HttpCli
+		// if strings.HasPrefix(rebuilder.Compensation.SyncClientURL, "https") {
+		// 	hcli = rebuilder.httpCli2
+		// }
+		blocksMap, err = GetBlocksRetries(hcli, rebuilder.Compensation.SyncClientURL, bindexes, 3)
 		if err != nil {
 			entry.WithError(err).Error("fetching blocks")
 			return nil, err
@@ -540,7 +633,11 @@ OUTER:
 		rshard.MinerID2 = shard.NodeID2
 		rshard.VHF = shard.VHF
 		//rshard.VNF = block.VNF
-		rshard.SNID = snIDFromID(uint64(shard.ID))
+		if rebuilder.Symmetric {
+			rshard.SNID = 0
+		} else {
+			rshard.SNID = snIDFromID(uint64(shard.ID))
+		}
 		//rshard.SNID = block.SNID
 		var block *ytab.Block
 		var err error
@@ -657,7 +754,7 @@ OUTER:
 
 func (rebuilder *Rebuilder) reaper(ctx context.Context) {
 	entry := log.WithFields(log.Fields{Function: "reaper"})
-	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
+	collectionRM := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	for {
 		cur, err := collectionRM.Find(ctx, bson.M{"status": bson.M{"$gt": 1, "$lt": 99}, "finishBuild": true})
 		if err != nil {
@@ -675,7 +772,7 @@ func (rebuilder *Rebuilder) reaper(ctx context.Context) {
 			rebuilder.lock.Lock()
 			delete(rebuilder.taskAllocator, miner.ID)
 			rebuilder.lock.Unlock()
-
+			entry.WithField(MinerID, miner.ID).Info("delete task allocator")
 		}
 		time.Sleep(time.Duration(rebuilder.Params.ProcessReaperInterval) * time.Second)
 	}
@@ -685,7 +782,7 @@ func (rebuilder *Rebuilder) reaper(ctx context.Context) {
 func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.MultiTaskDescription, error) {
 	entry := log.WithFields(log.Fields{Function: "GetRebuildTasks", RebuilderID: id})
 	entry.Debug("ready for fetching rebuildable tasks")
-	collectionRM := rebuilder.rebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
+	collectionRM := rebuilder.RebuilderdbClient.Database(RebuilderDB).Collection(RebuildMinerTab)
 	rbNode := rebuilder.NodeManager.GetNode(id)
 	if rbNode == nil {
 		err := fmt.Errorf("node %d not found", id)
@@ -695,7 +792,7 @@ func (rebuilder *Rebuilder) GetRebuildTasks(ctx context.Context, id int32) (*pb.
 	entry.Debugf("fetch rebuilding node %d", rbNode.ID)
 	startTime := time.Now().UnixNano()
 	//如果被分配重建任务的矿机状态大于1或者权重为零则不分配重建任务
-	if rbNode.Rebuilding > 1 || rbNode.Status != 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
+	if rbNode.Rebuilding > 200 || rbNode.Status != 1 || rbNode.Valid == 0 || rbNode.Weight < float64(rebuilder.Params.WeightThreshold) || rbNode.AssignedSpace <= 0 || rbNode.Quota <= 0 || rbNode.Version < int32(rebuilder.Params.MinerVersionThreshold) {
 		//err := fmt.Errorf("no tasks can be allocated to miner %d", id)
 		entry.WithError(ErrInvalidNode).Debugf("status of rebuilder miner is %d, weight is %f, rebuilding is %d, version is %d", rbNode.Status, rbNode.Weight, rbNode.Rebuilding, rbNode.Version)
 		return nil, ErrInvalidNode
@@ -715,7 +812,7 @@ OUTER:
 			select {
 			case t, ok := <-taskChan.ch:
 				if !ok {
-					entry.Debugf("task allocator %d is closed", minerID)
+					entry.Infof("task allocator %d is closed", minerID)
 					taskChan.close = true
 					_, err := collectionRM.UpdateOne(ctx, bson.M{"_id": minerID}, bson.M{"$set": bson.M{"finishBuild": true, "expiredTime": time.Now().UnixNano() + int64(rebuilder.Params.RebuildShardExpiredTime)*1000000000}})
 					if err != nil {
@@ -779,19 +876,27 @@ OUTER:
 				//如果矿机不存在则制造一个假地址
 				entry.Debugf("invalid node1 for shard %d/%d: nodeId %d", shard.ID, idx, id.NodeID1)
 				loc.NodeId = "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r"
-				loc.Addrs = []string{"/ip4/127.0.0.1/tcp/59999"}
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs = []string{"/ip4/127.0.0.1/tcp/59999"}
+				}
 			} else {
 				loc.NodeId = n1.NodeID
-				loc.Addrs = n1.Addrs
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs = n1.Addrs
+				}
 			}
 			if n2 == nil {
 				//如果矿机不存在则制造一个假地址
 				entry.Debugf("invalid node2 for shard %d/%d: nodeId %d", shard.ID, idx, id.NodeID2)
 				loc.NodeId2 = "16Uiu2HAmKg7EXBqx3SXbE2XkqbPLft8NGkzQcsbJymVB9uw7fW1r"
-				loc.Addrs2 = []string{"/ip4/127.0.0.1/tcp/59999"}
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs2 = []string{"/ip4/127.0.0.1/tcp/59999"}
+				}
 			} else {
 				loc.NodeId2 = n2.NodeID
-				loc.Addrs2 = n2.Addrs
+				if !rebuilder.Params.RemoveMinerAddrs {
+					loc.Addrs2 = n2.Addrs
+				}
 			}
 			locations = append(locations, loc)
 		}
@@ -820,12 +925,18 @@ OUTER:
 				if minerID == shard.MinerID { //如果被重建分片的NodeID为被重建矿机，则使用NodeID2作为重建备份节点
 					backNode := rebuilder.NodeManager.GetNode(shard.MinerID2)
 					if backNode != nil {
-						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
+						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID}
+						if !rebuilder.Params.RemoveMinerAddrs {
+							task.BackupLocation.Addrs = backNode.Addrs
+						}
 					}
 				} else if minerID == shard.MinerID2 { //如果被重建分片的NodeID2为被重建矿机，则使用NodeID作为重建备份节点
 					backNode := rebuilder.NodeManager.GetNode(shard.MinerID)
 					if backNode != nil {
-						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID, Addrs: backNode.Addrs}
+						task.BackupLocation = &pb.P2PLocation{NodeId: backNode.NodeID}
+						if !rebuilder.Params.RemoveMinerAddrs {
+							task.BackupLocation.Addrs = backNode.Addrs
+						}
 					}
 				} else {
 					entry.Errorf("neither MinerID nor MinerID2 match rebuilder ID for shard %d", shard.ID)
@@ -947,7 +1058,7 @@ func GetBlocks(httpCli *http.Client, syncClientURL string, bindexes []uint64) (m
 	request.Header.Add("Accept-Encoding", "gzip")
 	resp, err := httpCli.Do(request)
 	if err != nil {
-		entry.WithError(err).Errorf("get checkpoints failed: %s", fullURL)
+		entry.WithError(err).Errorf("get blocks failed: %s", fullURL)
 		return nil, err
 	}
 	defer resp.Body.Close()
